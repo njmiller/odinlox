@@ -18,8 +18,7 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
         fmt.printf("%4d ", chunk.lines[offset])
     }
 
-    instruction : OpCode
-    instruction = auto_cast chunk.code[offset]
+    instruction : OpCode = auto_cast chunk.code[offset]
     switch instruction {
         case .ADD:
             return simpleInstruction("OP_ADD", offset)

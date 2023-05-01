@@ -12,8 +12,7 @@ Scanner :: struct {
 
 Token :: struct {
     type : TokenType,
-    start : int,
-    length : int,
+    value : string,
     line : int,
 }
 
@@ -83,16 +82,14 @@ match :: proc(expected : u8) -> bool {
 
 makeToken :: proc(type: TokenType) -> (token: Token) {
     token.type = type
-    token.start = scanner.start
-    token.length = scanner.current - scanner.start
+    token.value = scanner.source[scanner.start:scanner.current]
     token.line = scanner.line
     return
 }
 
 errorToken :: proc(message: string) -> (token: Token) {
     token.type = .ERROR
-    token.start = 0
-    token.length = len(message)
+    token.value = message
     token.line = scanner.line
     return
 }
@@ -156,9 +153,7 @@ checkKeyword :: proc(start: int, length: int, rest: string, type: TokenType) -> 
     i0 := scanner.start + start
     i1 := i0 + length
     slice := scanner.source[i0:i1]
-    if strings.compare(rest, slice) == 0 {
-            return type
-    }
+    if strings.compare(rest, slice) == 0 do return type
 
     return .IDENTIFIER
 }

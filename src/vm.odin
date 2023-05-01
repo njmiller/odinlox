@@ -5,7 +5,7 @@ package odinlox
 
 import "core:fmt"
 
-DEBUG :: #config(DEBUG, false)
+DEBUG_TRACE_EXECUTION :: ODIN_DEBUG
 STACK_MAX :: 256
 
 VM :: struct {
@@ -49,7 +49,7 @@ run :: proc() -> InterpretResult {
     instruction : OpCode
 
     for {
-        when DEBUG {
+        when DEBUG_TRACE_EXECUTION {
             fmt.printf("       ")
             for slot := 0; slot < vm.stackTop; slot += 1 {
                 fmt.printf("[ ")
@@ -91,7 +91,6 @@ run :: proc() -> InterpretResult {
 }
 
 interpret :: proc(source: string) -> InterpretResult {
-    /*
     chunk : Chunk
 
     if !compile(source, &chunk) {
@@ -106,9 +105,6 @@ interpret :: proc(source: string) -> InterpretResult {
 
     freeChunk(&chunk)
     return result
-    */
-    compile(source)
-    return .OK
 }
 
 read_byte :: proc() -> (val: u8) {
