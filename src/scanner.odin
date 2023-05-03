@@ -56,7 +56,7 @@ isDigit :: proc(c: u8) -> bool {
 }
 
 isAtEnd :: proc() -> bool {
-    return scanner.current == len(scanner.source)
+    return scanner.current >= len(scanner.source)
 }
 
 advance :: proc() -> u8 {
@@ -69,7 +69,7 @@ peek :: proc() -> u8 {
 }
 
 peekNext :: proc() -> u8 {
-    if isAtEnd() do return '\b' //NJM debug
+    if isAtEnd() do return '\b' //NJM: Check
     return scanner.source[scanner.current+1]
 }
 
