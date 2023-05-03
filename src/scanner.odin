@@ -64,6 +64,7 @@ advance :: proc() -> u8 {
     return scanner.source[scanner.current-1]
 }
 
+@(private="file")
 peek :: proc() -> u8 {
     return scanner.source[scanner.current]
 }

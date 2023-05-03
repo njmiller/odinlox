@@ -3,8 +3,11 @@ package odinlox
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:log"
 
 main :: proc() {
+    context.logger = log.create_console_logger()
+    
     chunk : Chunk
 
     initVM()
@@ -46,6 +49,8 @@ runFile :: proc(path: string) {
 
     //Adding a newline character to the end so we can see the end of the last token without crashing
     source2 := strings.concatenate({string(source), "\r\n"})
+    delete(source)
+    defer delete(source2)
 
     //result := interpret(string(source))
     result := interpret(source2)

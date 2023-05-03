@@ -26,14 +26,28 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return constantInstruction("OP_CONSTANT", chunk, offset)
         case .DIVIDE:
             return simpleInstruction("OP_DIVIDE", offset)
+        case .EQUAL:
+            return simpleInstruction("OP_EQUAL", offset)
+        case .FALSE:
+            return simpleInstruction("OP_FALSE", offset)
+        case .GREATER:
+            return simpleInstruction("OP_GREATER", offset)
+        case .LESS:
+            return simpleInstruction("OP_LESS", offset)
         case .MULTIPLY:
             return simpleInstruction("OP_MULTIPLY", offset)
         case .NEGATE:
             return simpleInstruction("OP_NEGATE", offset)
+        case .NIL:
+            return simpleInstruction("OP_NIL", offset)
+        case .NOT:
+            return simpleInstruction("OP_NOT", offset)
         case .RETURN:
             return simpleInstruction("OP_RETURN", offset)
         case .SUBTRACT:
             return simpleInstruction("OP_SUBTRACT", offset)
+        case .TRUE:
+            return simpleInstruction("OP_TRUE", offset)
         case:
             fmt.printf("Unknown opcode %d\n", instruction)
             return offset + 1

@@ -51,31 +51,31 @@ rules : []ParseRule = {
     TokenType.SEMICOLON     = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.SLASH         = ParseRule{nil,      binary, Precedence.FACTOR},
     TokenType.STAR          = ParseRule{nil,      binary, Precedence.FACTOR},
-    TokenType.BANG          = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.BANG_EQUAL    = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.BANG          = ParseRule{unary,    nil,    Precedence.NONE},
+    TokenType.BANG_EQUAL    = ParseRule{nil,      binary, Precedence.EQUALITY},
     TokenType.EQUAL         = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.EQUAL_EQUAL   = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.GREATER       = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.GREATER_EQUAL = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.LESS          = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.LESS_EQUAL    = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.EQUAL_EQUAL   = ParseRule{nil,      binary, Precedence.EQUALITY},
+    TokenType.GREATER       = ParseRule{nil,      binary, Precedence.COMPARISON},
+    TokenType.GREATER_EQUAL = ParseRule{nil,      binary, Precedence.COMPARISON},
+    TokenType.LESS          = ParseRule{nil,      binary, Precedence.COMPARISON},
+    TokenType.LESS_EQUAL    = ParseRule{nil,      binary, Precedence.COMPARISON},
     TokenType.IDENTIFIER    = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.STRING        = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.NUMBER        = ParseRule{number,   nil,    Precedence.NONE},
     TokenType.AND           = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.CLASS         = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.ELSE          = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.FALSE         = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.FALSE         = ParseRule{literal,  nil,    Precedence.NONE},
     TokenType.FOR           = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.FUN           = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.IF            = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.NIL           = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.NIL           = ParseRule{literal,  nil,    Precedence.NONE},
     TokenType.OR            = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.PRINT         = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.RETURN        = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.SUPER         = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.THIS          = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.TRUE          = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.TRUE          = ParseRule{literal,  nil,    Precedence.NONE},
     TokenType.VAR           = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.WHILE         = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.ERROR         = ParseRule{nil,      nil,    Precedence.NONE},
@@ -150,7 +150,13 @@ emitBytes_op :: proc(byte1: OpCode, byte2: u8) {
 }
 
 @(private="file")
-emitBytes :: proc{emitBytes_op, emitBytes_u8}
+emitBytes_opop :: proc(byte1: OpCode, byte2: OpCode) {
+    emitByte(byte1)
+    emitByte(byte2)
+}
+
+@(private="file")
+emitBytes :: proc{emitBytes_opop, emitBytes_op, emitBytes_u8}
 
 @(private="file")
 emitConstant :: proc(value: Value) {
@@ -216,6 +222,19 @@ grouping :: proc() {
 }
 
 @(private="file")
+literal :: proc() {
+    #partial switch parser.previous.type {
+        case .FALSE:
+            emitByte(OpCode.FALSE)
+        case .NIL:
+            emitByte(OpCode.NIL)
+        case .TRUE:
+            emitByte(OpCode.TRUE)
+    }
+    return //unreachable
+}
+
+@(private="file")
 makeConstant :: proc(value: Value) -> u8 {
     constant := addConstant(currentChunk(), value)
     if constant > U8_MAX {
@@ -228,8 +247,8 @@ makeConstant :: proc(value: Value) -> u8 {
 
 @(private="file")
 number :: proc() {
-    value : Value = auto_cast strconv.atof(parser.previous.value)
-    emitConstant(value)
+    value := strconv.atof(parser.previous.value)
+    emitConstant(NUMBER_VAL(value))
 }
 
 @(private="file")
@@ -259,9 +278,12 @@ unary :: proc() {
 
     // Emit the operator instruction.
     #partial switch operatorType {
+        case .BANG:
+            emitByte(OpCode.NOT)
         case .MINUS: 
             emitByte(OpCode.NEGATE)
     }
+    return //Unreachable
 }
 
 @(private="file")
@@ -271,9 +293,15 @@ binary :: proc() {
     parsePrecedence(cast(Precedence)(int(rule.precedence)+1))
 
     #partial switch operatorType {
-        case TokenType.PLUS:     emitByte(OpCode.ADD)
-        case TokenType.MINUS:    emitByte(OpCode.SUBTRACT)
-        case TokenType.STAR:     emitByte(OpCode.MULTIPLY)
-        case TokenType.SLASH:    emitByte(OpCode.DIVIDE)
+        case .BANG_EQUAL: emitBytes(OpCode.EQUAL, OpCode.NOT)
+        case .EQUAL_EQUAL: emitByte(OpCode.EQUAL)
+        case .GREATER : emitByte(OpCode.GREATER)
+        case .GREATER_EQUAL : emitBytes(OpCode.LESS, OpCode.NOT)
+        case .LESS : emitByte(OpCode.LESS)
+        case .LESS_EQUAL : emitBytes(OpCode.GREATER, OpCode.NOT)
+        case .PLUS:     emitByte(OpCode.ADD)
+        case .MINUS:    emitByte(OpCode.SUBTRACT)
+        case .STAR:     emitByte(OpCode.MULTIPLY)
+        case .SLASH:    emitByte(OpCode.DIVIDE)
     }
 }

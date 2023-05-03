@@ -4,6 +4,7 @@ package odinlox
 //in the core library
 
 import "core:fmt"
+import "core:os"
 
 DEBUG_TRACE_EXECUTION :: ODIN_DEBUG
 STACK_MAX :: 256
@@ -35,6 +36,16 @@ freeVM :: proc() {
 
 }
 
+@(private="file")
+isFalsey :: proc(value: Value) -> bool {
+    return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value))
+}
+
+@(private="file")
+peek :: proc(distance: int) -> Value {
+    return vm.stack[vm.stackTop - 1 - distance]
+}
+
 push :: proc(value: Value) {
     vm.stack[vm.stackTop] = value
     vm.stackTop += 1
@@ -62,27 +73,75 @@ run :: proc() -> InterpretResult {
         instruction = auto_cast read_byte()
         switch instruction {
             case .ADD:
-                b := pop()
-                a := pop()
-                push(a + b)
+                if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
+                    runtimeError("Operands must be numbers.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                b := AS_NUMBER(pop())
+                a := AS_NUMBER(pop())
+                push(NUMBER_VAL(a + b))
             case .DIVIDE:
+                if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
+                    runtimeError("Operands must be numbers.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                b := AS_NUMBER(pop())
+                a := AS_NUMBER(pop())
+                push(NUMBER_VAL(a / b))
+            case .EQUAL:
                 b := pop()
                 a := pop()
-                push(a / b)
+                push(BOOL_VAL(valuesEqual(a, b)))
+            case .GREATER:
+                if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
+                    runtimeError("Operands must be numbers.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                b := AS_NUMBER(pop())
+                a := AS_NUMBER(pop())
+                push(BOOL_VAL(a > b))
+            case .FALSE:
+                push(BOOL_VAL(false))
+            case .LESS:
+                if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
+                    runtimeError("Operands must be numbers.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                b := AS_NUMBER(pop())
+                a := AS_NUMBER(pop())
+                push(BOOL_VAL(a < b))
             case .MULTIPLY:
-                b := pop()
-                a := pop()
-                push(a * b)
-            case .NEGATE: 
-                push(-pop())
+                if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
+                    runtimeError("Operands must be numbers.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                b := AS_NUMBER(pop())
+                a := AS_NUMBER(pop())
+                push(NUMBER_VAL(a * b))
+            case .NEGATE:
+                if !IS_NUMBER(peek(0)) {
+                    runtimeError("Operand must be a number.")
+                    return InterpretResult.RUNTIME_ERROR
+                } 
+                push(NUMBER_VAL(-AS_NUMBER(pop())))
+            case .NIL:
+                push(NIL_VAL())
+            case .NOT:
+                push(BOOL_VAL(isFalsey(pop())))
             case .RETURN:
                 printValue(pop())
                 fmt.printf("\n")
                 return .OK
             case .SUBTRACT:
-                b := pop()
-                a := pop()
-                push(a - b)
+                if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
+                    runtimeError("Operands must be numbers.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                b := AS_NUMBER(pop())
+                a := AS_NUMBER(pop())
+                push(NUMBER_VAL(a - b))
+            case.TRUE:
+                push(BOOL_VAL(true))
             case .CONSTANT:
                 constant := read_constant()
                 push(constant)
@@ -116,4 +175,25 @@ read_byte :: proc() -> (val: u8) {
 read_constant :: proc() -> Value {
     offset := read_byte()
     return vm.chunk.constants[offset]
+}
+
+valuesEqual :: proc(a: Value, b: Value) -> bool {
+    if a.type != b.type do return false
+    switch a.type {
+        case .BOOL: return AS_BOOL(a) == AS_BOOL(b)
+        case .NIL: return true
+        case .NUMBER: return AS_NUMBER(a) == AS_NUMBER(b)
+    }
+    return false //Unreachable
+}
+//NJM: Check with -false
+@(private="file")
+runtimeError :: proc(format: string, args: ..any) {
+    fmt.fprintf(fd=os.stderr, fmt=format, args=args)
+    fmt.fprintf(os.stderr, "\n")
+
+    inst_index := vm.ip - 1
+    line := vm.chunk.lines[inst_index]
+    fmt.fprintf(os.stderr, "[line %d] in script\n", line)
+    resetStack()
 }

@@ -6,9 +6,16 @@ OpCode :: enum u8 {
     ADD,
     CONSTANT,
     DIVIDE,
+    EQUAL,
+    FALSE,
+    GREATER,
+    LESS,
     MULTIPLY,
     NEGATE,
+    NIL,
+    NOT,
     RETURN,
+    TRUE,
     SUBTRACT,
 }
 
