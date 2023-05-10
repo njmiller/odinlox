@@ -60,7 +60,7 @@ rules : []ParseRule = {
     TokenType.LESS          = ParseRule{nil,      binary, Precedence.COMPARISON},
     TokenType.LESS_EQUAL    = ParseRule{nil,      binary, Precedence.COMPARISON},
     TokenType.IDENTIFIER    = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.STRING        = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.STRING        = ParseRule{stringf,  nil,    Precedence.NONE},
     TokenType.NUMBER        = ParseRule{number,   nil,    Precedence.NONE},
     TokenType.AND           = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.CLASS         = ParseRule{nil,      nil,    Precedence.NONE},
@@ -267,6 +267,12 @@ parsePrecedence :: proc(precedence: Precedence) {
         infixRule := getRule(parser.previous.type).infix
         infixRule()
     }
+}
+
+@(private="file")
+stringf :: proc() {
+    str := parser.previous.value[1:(len(parser.previous.value)-1)]
+    emitConstant(OBJ_VAL(copyString(str)))
 }
 
 @(private="file")

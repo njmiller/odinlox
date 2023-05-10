@@ -5,6 +5,7 @@ package odinlox
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 
 DEBUG_TRACE_EXECUTION :: ODIN_DEBUG
 STACK_MAX :: 256
@@ -14,6 +15,8 @@ VM :: struct {
     ip: int,
     stack: [STACK_MAX]Value,
     stackTop: int,
+    strings : Table,
+    objects: ^Obj,
 }
 
 InterpretResult :: enum {
@@ -30,15 +33,33 @@ resetStack  :: proc() {
 
 initVM :: proc() {
     resetStack()
+    vm.objects = nil
+    initTable(&vm.strings)
 }
 
 freeVM :: proc() {
-
+    freeObjects()
+    freeTable(&vm.strings)
 }
 
 @(private="file")
 isFalsey :: proc(value: Value) -> bool {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value))
+}
+
+@(private="file")
+concatenate :: proc() {
+    b := AS_STRING(pop())
+    a := AS_STRING(pop())
+    
+    c := strings.concatenate( {a, b} )
+
+    result := takeString(c)
+    push(OBJ_VAL(result))
+
+    //NJM: Check. I don't think I need to delete a or b since they are part of the
+    //objects which will be garbage collected. C is cloned for result so we can delete it
+    delete(c)
 }
 
 @(private="file")
@@ -73,13 +94,16 @@ run :: proc() -> InterpretResult {
         instruction = auto_cast read_byte()
         switch instruction {
             case .ADD:
-                if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
-                    runtimeError("Operands must be numbers.")
+                if IS_STRING(peek(0)) && IS_STRING(peek(1)) {
+                    concatenate()
+                } else if IS_NUMBER(peek(0)) && IS_NUMBER(peek(0)) {
+                    b := AS_NUMBER(pop())
+                    a := AS_NUMBER(pop())
+                    push(NUMBER_VAL(a + b))
+                } else {
+                    runtimeError("Operands must be two numbers or two strings.")
                     return InterpretResult.RUNTIME_ERROR
                 }
-                b := AS_NUMBER(pop())
-                a := AS_NUMBER(pop())
-                push(NUMBER_VAL(a + b))
             case .DIVIDE:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -177,15 +201,6 @@ read_constant :: proc() -> Value {
     return vm.chunk.constants[offset]
 }
 
-valuesEqual :: proc(a: Value, b: Value) -> bool {
-    if a.type != b.type do return false
-    switch a.type {
-        case .BOOL: return AS_BOOL(a) == AS_BOOL(b)
-        case .NIL: return true
-        case .NUMBER: return AS_NUMBER(a) == AS_NUMBER(b)
-    }
-    return false //Unreachable
-}
 //NJM: Check with -false
 @(private="file")
 runtimeError :: proc(format: string, args: ..any) {
