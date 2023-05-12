@@ -34,7 +34,7 @@ ParseRule :: struct {
     precedence: Precedence,
 }
 
-ParseFn :: #type proc()
+ParseFn :: #type proc(canAssign: bool)
 
 parser : Parser
 compilingChunk : ^Chunk
@@ -59,7 +59,7 @@ rules : []ParseRule = {
     TokenType.GREATER_EQUAL = ParseRule{nil,      binary, Precedence.COMPARISON},
     TokenType.LESS          = ParseRule{nil,      binary, Precedence.COMPARISON},
     TokenType.LESS_EQUAL    = ParseRule{nil,      binary, Precedence.COMPARISON},
-    TokenType.IDENTIFIER    = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.IDENTIFIER    = ParseRule{variable, nil,    Precedence.NONE},
     TokenType.STRING        = ParseRule{stringf,  nil,    Precedence.NONE},
     TokenType.NUMBER        = ParseRule{number,   nil,    Precedence.NONE},
     TokenType.AND           = ParseRule{nil,      nil,    Precedence.NONE},
@@ -90,8 +90,9 @@ compile :: proc(source: string, chunk: ^Chunk) -> bool {
     parser.panicMode = false
 
     advance()
-    expression()
-    consume(.EOF, "Expect end of expression.")
+    for !match(TokenType.EOF) do declaration()
+    //expression()
+    //consume(.EOF, "Expect end of expression.")
     endCompiler()
     return !parser.hadError
 }
@@ -108,6 +109,11 @@ advance :: proc() {
 }
 
 @(private="file")
+check :: proc(type: TokenType) -> bool {
+    return parser.current.type == type
+}
+
+@(private="file")
 consume :: proc(type: TokenType, message: string) {
     if parser.current.type == type {
         advance()
@@ -120,6 +126,22 @@ consume :: proc(type: TokenType, message: string) {
 @(private="file")
 currentChunk :: proc() -> ^Chunk {
     return compilingChunk
+}
+
+@(private="file")
+declaration :: proc() {
+    if match(TokenType.VAR) {
+        varDeclaration()
+    } else {
+        statement()
+    }
+
+    if parser.panicMode do synchronize()
+}
+
+@(private="file")
+defineVariable :: proc(global: u8) {
+    emitBytes(OpCode.DEFINE_GLOBAL, global)
 }
 
 @(private="file")
@@ -211,18 +233,30 @@ expression :: proc() {
 }
 
 @(private="file")
+expressionStatement :: proc() {
+    expression()
+    consume(TokenType.SEMICOLON, "Exprec ';' after expression.")
+    emitByte(OpCode.POP)
+}
+
+@(private="file")
 getRule :: proc(type: TokenType) -> ^ParseRule {
     return &rules[type]
 }
 
 @(private="file")
-grouping :: proc() {
+grouping :: proc(canAssign: bool) {
     expression()
     consume(.RIGHT_PAREN, "Expect ')' after expression.")
 }
 
 @(private="file")
-literal :: proc() {
+identifierConstant :: proc(name: ^Token) -> u8 {
+    return makeConstant(OBJ_VAL(copyString(name.value)))
+}
+
+@(private="file")
+literal :: proc(canAssign: bool) {
     #partial switch parser.previous.type {
         case .FALSE:
             emitByte(OpCode.FALSE)
@@ -246,7 +280,27 @@ makeConstant :: proc(value: Value) -> u8 {
 }
 
 @(private="file")
-number :: proc() {
+match :: proc(type: TokenType) -> bool {
+    if !check(type) do return false
+    advance()
+    return true
+}
+
+@(private="file")
+namedVariable :: proc(name: Token, canAssign: bool) {
+    name := name //NJM, TODO: See if this works so we can take pointer to name
+    arg := identifierConstant(&name)
+
+    if canAssign && match(TokenType.EQUAL) {
+        expression()
+        emitBytes(OpCode.SET_GLOBAL, arg)
+    } else {
+        emitBytes(OpCode.GET_GLOBAL, arg)
+    }
+}
+
+@(private="file")
+number :: proc(canAssign: bool) {
     value := strconv.atof(parser.previous.value)
     emitConstant(NUMBER_VAL(value))
 }
@@ -260,23 +314,61 @@ parsePrecedence :: proc(precedence: Precedence) {
         return
     }
 
-    prefixRule()
+    canAssign := precedence <= Precedence.ASSIGNMENT
+    prefixRule(canAssign)
 
     for precedence <= getRule(parser.current.type).precedence {
         advance()
         infixRule := getRule(parser.previous.type).infix
-        infixRule()
+        infixRule(canAssign)
     }
 }
 
 @(private="file")
-stringf :: proc() {
+parseVariable :: proc(errorMessage: string) -> u8 {
+    consume(TokenType.IDENTIFIER, errorMessage)
+    return identifierConstant(&parser.previous)
+}
+
+@(private="file")
+printStatement :: proc() {
+    expression()
+    consume(TokenType.SEMICOLON, "Expect ';' after value.")
+    emitByte(OpCode.PRINT)
+}
+
+@(private="file")
+statement :: proc() {
+    if match(TokenType.PRINT) {
+        printStatement()
+    } else {
+        expressionStatement()
+    }
+}
+
+@(private="file")
+stringf :: proc(canAssign: bool) {
     str := parser.previous.value[1:(len(parser.previous.value)-1)]
     emitConstant(OBJ_VAL(copyString(str)))
 }
 
 @(private="file")
-unary :: proc() {
+synchronize :: proc() {
+    parser.panicMode = false
+
+    for parser.current.type != TokenType.EOF {
+        if parser.previous.type == TokenType.SEMICOLON do return
+        #partial switch parser.current.type {
+            case .CLASS, .FUN, .VAR, .FOR, .IF, .WHILE, .PRINT, .RETURN:
+                return
+        }
+
+        advance()
+    }
+}
+
+@(private="file")
+unary :: proc(canAssign: bool) {
     operatorType := parser.previous.type
     
     // Compile the operand
@@ -293,7 +385,26 @@ unary :: proc() {
 }
 
 @(private="file")
-binary :: proc() {
+varDeclaration :: proc() {
+    global := parseVariable("Expect variable name.")
+
+    if match(TokenType.EQUAL) {
+        expression()
+    } else {
+        emitByte(OpCode.NIL)
+    }
+    consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.")
+
+    defineVariable(global)
+}
+
+@(private="file")
+variable :: proc(canAssign: bool) {
+    namedVariable(parser.previous, canAssign)
+}
+
+@(private="file")
+binary :: proc(canAssign: bool) {
     operatorType := parser.previous.type
     rule := getRule(operatorType)
     parsePrecedence(cast(Precedence)(int(rule.precedence)+1))

@@ -24,12 +24,16 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return simpleInstruction("OP_ADD", offset)
         case .CONSTANT:
             return constantInstruction("OP_CONSTANT", chunk, offset)
+        case .DEFINE_GLOBAL:
+            return constantInstruction("OP_DEFINE_GLOBAL", chunk, offset)
         case .DIVIDE:
             return simpleInstruction("OP_DIVIDE", offset)
         case .EQUAL:
             return simpleInstruction("OP_EQUAL", offset)
         case .FALSE:
             return simpleInstruction("OP_FALSE", offset)
+        case .GET_GLOBAL:
+            return constantInstruction("OP_GET_GLOBAL", chunk, offset)
         case .GREATER:
             return simpleInstruction("OP_GREATER", offset)
         case .LESS:
@@ -42,8 +46,14 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return simpleInstruction("OP_NIL", offset)
         case .NOT:
             return simpleInstruction("OP_NOT", offset)
+        case .POP:
+            return simpleInstruction("OP_POP", offset)
+        case .PRINT:
+            return simpleInstruction("OP_PRINT", offset)
         case .RETURN:
             return simpleInstruction("OP_RETURN", offset)
+        case .SET_GLOBAL:
+            return constantInstruction("OP_SET_GLOBAL", chunk, offset)
         case .SUBTRACT:
             return simpleInstruction("OP_SUBTRACT", offset)
         case .TRUE:

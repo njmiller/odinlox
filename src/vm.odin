@@ -15,7 +15,8 @@ VM :: struct {
     ip: int,
     stack: [STACK_MAX]Value,
     stackTop: int,
-    strings : Table,
+    globals: Table,
+    strings: Table,
     objects: ^Obj,
 }
 
@@ -35,11 +36,13 @@ initVM :: proc() {
     resetStack()
     vm.objects = nil
     initTable(&vm.strings)
+    initTable(&vm.globals)
 }
 
 freeVM :: proc() {
     freeObjects()
     freeTable(&vm.strings)
+    freeTable(&vm.globals)
 }
 
 @(private="file")
@@ -104,6 +107,10 @@ run :: proc() -> InterpretResult {
                     runtimeError("Operands must be two numbers or two strings.")
                     return InterpretResult.RUNTIME_ERROR
                 }
+            case .DEFINE_GLOBAL:
+                name := AS_OBJSTRING(read_constant())
+                tableSet(&vm.globals, name, peek(0))
+                pop()
             case .DIVIDE:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -116,6 +123,14 @@ run :: proc() -> InterpretResult {
                 b := pop()
                 a := pop()
                 push(BOOL_VAL(valuesEqual(a, b)))
+            case.GET_GLOBAL:
+                name := AS_OBJSTRING(read_constant())
+                value: Value
+                if !tableGet(&vm.globals, name, &value) {
+                    runtimeError("Undefined variable '%s'.", name.str)
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                push(value)
             case .GREATER:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -152,10 +167,21 @@ run :: proc() -> InterpretResult {
                 push(NIL_VAL())
             case .NOT:
                 push(BOOL_VAL(isFalsey(pop())))
-            case .RETURN:
+            case .POP:
+                pop()
+            case .PRINT:
                 printValue(pop())
                 fmt.printf("\n")
+            case .RETURN:
+                // Exit interpreter
                 return .OK
+            case .SET_GLOBAL:
+                name := AS_OBJSTRING(read_constant())
+                if tableSet(&vm.globals, name, peek(0)) {
+                    tableDelete(&vm.globals, name)
+                    runtimeError("Undefined variable '%s'.", name.str)
+                    return InterpretResult.RUNTIME_ERROR
+                }
             case .SUBTRACT:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")

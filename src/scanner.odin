@@ -74,6 +74,7 @@ peekNext :: proc() -> u8 {
     return scanner.source[scanner.current+1]
 }
 
+@(private="file")
 match :: proc(expected : u8) -> bool {
     if isAtEnd() do return false
     if scanner.source[scanner.current] != expected do return false

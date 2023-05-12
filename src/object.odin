@@ -59,6 +59,8 @@ copyString :: proc(str: string) -> ^ObjString {
     
 }
 
+//TODO: Replace with standard library hash function???
+//Do some timing tests
 hashString :: proc(str: string) -> u32 {
     hash : u32 = 2166136261
     for char in str {
@@ -67,6 +69,7 @@ hashString :: proc(str: string) -> u32 {
     }
     return hash
 }
+
 isObjType :: proc(value: Value, type: ObjType) -> bool {
     return IS_OBJ(value) && (AS_OBJ(value).type == type)
 }

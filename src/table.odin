@@ -5,6 +5,8 @@ import "core:strings"
 TABLE_MAX_LOAD :: 0.75
 
 //TODO: Implement this hashtable structure
+//Would require moving hash to Entry structure
+//instead of being stored in Key object
 /*
 Table :: struct($Key, $Value: typeid) {
     count: int,
