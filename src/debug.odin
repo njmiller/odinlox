@@ -34,6 +34,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return simpleInstruction("OP_FALSE", offset)
         case .GET_GLOBAL:
             return constantInstruction("OP_GET_GLOBAL", chunk, offset)
+        case .GET_LOCAL:
+            return byteInstruction("OP_GET_LOCAL", chunk, offset)
         case .GREATER:
             return simpleInstruction("OP_GREATER", offset)
         case .LESS:
@@ -54,6 +56,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return simpleInstruction("OP_RETURN", offset)
         case .SET_GLOBAL:
             return constantInstruction("OP_SET_GLOBAL", chunk, offset)
+        case .SET_LOCAL:
+            return byteInstruction("OP_SET_LOCAL", chunk, offset)
         case .SUBTRACT:
             return simpleInstruction("OP_SUBTRACT", offset)
         case .TRUE:
@@ -64,6 +68,14 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
     }
 }
 
+@(private="file")
+byteInstruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
+    slot := chunk.code[offset + 1]
+    fmt.printf("%-16s %4d\n", name, slot)
+    return offset + 2
+}
+
+@(private="file")
 constantInstruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
     constant := chunk.code[offset+1]
     fmt.printf("%-16s %4d '", name, constant)
@@ -72,6 +84,7 @@ constantInstruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
     return offset + 2
 }
 
+@(private="file")
 simpleInstruction :: proc(name: string, offset: int) -> int {
     fmt.printf("%s\n", name)
     return offset + 1

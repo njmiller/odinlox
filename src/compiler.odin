@@ -3,9 +3,11 @@ package odinlox
 import "core:fmt"
 import "core:os"
 import "core:strconv"
+import "core:strings"
 
 DEBUG_PRINT_CODE :: ODIN_DEBUG
 U8_MAX :: int(max(u8))
+U8_COUNT :: U8_MAX + 1
 
 Parser :: struct {
     current: Token,
@@ -34,9 +36,21 @@ ParseRule :: struct {
     precedence: Precedence,
 }
 
+Local :: struct {
+    name: Token,
+    depth: int,
+}
+
+Compiler :: struct {
+    locals: [U8_COUNT]Local,
+    localCount: int,
+    scopeDepth: int,
+}
+
 ParseFn :: #type proc(canAssign: bool)
 
 parser : Parser
+current : ^Compiler = nil
 compilingChunk : ^Chunk
 
 rules : []ParseRule = {
@@ -84,6 +98,8 @@ rules : []ParseRule = {
 
 compile :: proc(source: string, chunk: ^Chunk) -> bool {
     initScanner(source)
+    compiler : Compiler
+    initCompiler(&compiler)
     compilingChunk = chunk
 
     parser.hadError = false
@@ -98,6 +114,26 @@ compile :: proc(source: string, chunk: ^Chunk) -> bool {
 }
 
 @(private="file")
+initCompiler :: proc(compiler: ^Compiler) {
+    compiler.localCount = 0
+    compiler.scopeDepth = 0
+    current = compiler
+}
+
+@(private="file")
+addLocal :: proc(name: Token) {
+    if current.localCount == U8_COUNT {
+        error("Too many local variables in function.")
+        return
+    }
+
+    local := &current.locals[current.localCount]
+    current.localCount += 1
+    local.name = name
+    local.depth = -1
+}
+
+@(private="file")
 advance :: proc() {
     parser.previous = parser.current
     for {
@@ -106,6 +142,20 @@ advance :: proc() {
 
         errorAtCurrent(parser.current.value)
     }
+}
+
+@(private="file")
+beginScope :: proc() {
+    current.scopeDepth += 1
+}
+
+@(private="file")
+block :: proc() {
+    for !check(TokenType.RIGHT_BRACE) && !check(TokenType.EOF) {
+        declaration()
+    }
+
+    consume(TokenType.RIGHT_BRACE, "Expect '}' after block.")
 }
 
 @(private="file")
@@ -140,7 +190,29 @@ declaration :: proc() {
 }
 
 @(private="file")
+declareVariable :: proc() {
+    if current.scopeDepth == 0 do return
+
+    name := &parser.previous
+    for i := current.localCount - 1; i >= 0; i -= 1 {
+        local := &current.locals[i]
+        if local.depth != -1 && local.depth < current.scopeDepth do break
+
+        if identifiersEqual(name, &local.name) {
+            error("Alread a variable with this name in this scope.")
+        }
+    }
+
+    addLocal(name^)
+}
+
+@(private="file")
 defineVariable :: proc(global: u8) {
+    if current.scopeDepth > 0 {
+        markInitialized()
+        return
+    }
+
     emitBytes(OpCode.DEFINE_GLOBAL, global)
 }
 
@@ -196,6 +268,16 @@ endCompiler :: proc() {
 
     when DEBUG_PRINT_CODE {
         if !parser.hadError do disassembleChunk(currentChunk(), "code")
+    }
+}
+
+@(private="file")
+endScope :: proc() {
+    current.scopeDepth -= 1
+
+    for current.localCount > 0 && current.locals[current.localCount - 1].depth > current.scopeDepth {
+        emitByte(OpCode.POP)
+        current.localCount -= 1
     }
 }
 
@@ -256,6 +338,12 @@ identifierConstant :: proc(name: ^Token) -> u8 {
 }
 
 @(private="file")
+identifiersEqual :: proc(a: ^Token, b: ^Token) -> bool {
+    if len(a.value) != len(b.value) do return false
+    return strings.compare(a.value, b.value) == 0
+}
+
+@(private="file")
 literal :: proc(canAssign: bool) {
     #partial switch parser.previous.type {
         case .FALSE:
@@ -280,6 +368,11 @@ makeConstant :: proc(value: Value) -> u8 {
 }
 
 @(private="file")
+markInitialized :: proc() {
+    current.locals[current.localCount - 1].depth = current.scopeDepth
+}
+
+@(private="file")
 match :: proc(type: TokenType) -> bool {
     if !check(type) do return false
     advance()
@@ -289,13 +382,23 @@ match :: proc(type: TokenType) -> bool {
 @(private="file")
 namedVariable :: proc(name: Token, canAssign: bool) {
     name := name //NJM, TODO: See if this works so we can take pointer to name
-    arg := identifierConstant(&name)
+    getOp, setOp : OpCode
+
+    arg := resolveLocal(current, &name)
+    if arg != -1 {
+        getOp = OpCode.GET_LOCAL
+        setOp = OpCode.SET_LOCAL
+    } else {
+        arg = int(identifierConstant(&name))
+        getOp = OpCode.GET_GLOBAL
+        setOp = OpCode.SET_GLOBAL
+    }
 
     if canAssign && match(TokenType.EQUAL) {
         expression()
-        emitBytes(OpCode.SET_GLOBAL, arg)
+        emitBytes(setOp, u8(arg))
     } else {
-        emitBytes(OpCode.GET_GLOBAL, arg)
+        emitBytes(getOp, u8(arg))
     }
 }
 
@@ -327,6 +430,10 @@ parsePrecedence :: proc(precedence: Precedence) {
 @(private="file")
 parseVariable :: proc(errorMessage: string) -> u8 {
     consume(TokenType.IDENTIFIER, errorMessage)
+
+    declareVariable()
+    if current.scopeDepth > 0 do return 0
+
     return identifierConstant(&parser.previous)
 }
 
@@ -338,10 +445,29 @@ printStatement :: proc() {
 }
 
 @(private="file")
+resolveLocal :: proc(compiler: ^Compiler, name: ^Token) -> int {
+    for i := compiler.localCount - 1 ; i >= 0 ; i -= 1 {
+        local := &compiler.locals[i]
+        if identifiersEqual(name, &local.name) {
+            if local.depth == -1 {
+                error("Can't read local variables in its initializer.")
+            }
+            return i
+        }
+    }
+
+    return -1
+}
+
+@(private="file")
 statement :: proc() {
     if match(TokenType.PRINT) {
         printStatement()
-    } else {
+    } else if match(TokenType.LEFT_BRACE) {
+        beginScope()
+        block()
+        endScope()
+    }  else {
         expressionStatement()
     }
 }

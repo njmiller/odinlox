@@ -123,7 +123,7 @@ run :: proc() -> InterpretResult {
                 b := pop()
                 a := pop()
                 push(BOOL_VAL(valuesEqual(a, b)))
-            case.GET_GLOBAL:
+            case .GET_GLOBAL:
                 name := AS_OBJSTRING(read_constant())
                 value: Value
                 if !tableGet(&vm.globals, name, &value) {
@@ -131,6 +131,9 @@ run :: proc() -> InterpretResult {
                     return InterpretResult.RUNTIME_ERROR
                 }
                 push(value)
+            case .GET_LOCAL:
+                slot := read_byte()
+                push(vm.stack[slot])
             case .GREATER:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -182,6 +185,9 @@ run :: proc() -> InterpretResult {
                     runtimeError("Undefined variable '%s'.", name.str)
                     return InterpretResult.RUNTIME_ERROR
                 }
+            case .SET_LOCAL:
+                slot := read_byte()
+                vm.stack[slot] = peek(0)
             case .SUBTRACT:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
