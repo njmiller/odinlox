@@ -7,6 +7,7 @@ import "core:strings"
 
 DEBUG_PRINT_CODE :: ODIN_DEBUG
 U8_MAX :: int(max(u8))
+U16_MAX :: int(max(u16))
 U8_COUNT :: U8_MAX + 1
 
 Parser :: struct {
@@ -76,7 +77,7 @@ rules : []ParseRule = {
     TokenType.IDENTIFIER    = ParseRule{variable, nil,    Precedence.NONE},
     TokenType.STRING        = ParseRule{stringf,  nil,    Precedence.NONE},
     TokenType.NUMBER        = ParseRule{number,   nil,    Precedence.NONE},
-    TokenType.AND           = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.AND           = ParseRule{nil,      and_,   Precedence.AND},
     TokenType.CLASS         = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.ELSE          = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.FALSE         = ParseRule{literal,  nil,    Precedence.NONE},
@@ -84,7 +85,7 @@ rules : []ParseRule = {
     TokenType.FUN           = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.IF            = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.NIL           = ParseRule{literal,  nil,    Precedence.NONE},
-    TokenType.OR            = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.OR            = ParseRule{nil,      or_,    Precedence.OR},
     TokenType.PRINT         = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.RETURN        = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.SUPER         = ParseRule{nil,      nil,    Precedence.NONE},
@@ -142,6 +143,16 @@ advance :: proc() {
 
         errorAtCurrent(parser.current.value)
     }
+}
+
+@(private="file")
+and_ :: proc(canAssign: bool) {
+    endJump := emitJump(OpCode.JUMP_IF_FALSE)
+
+    emitByte(OpCode.POP)
+    parsePrecedence(Precedence.AND)
+
+    patchJump(endJump)
 }
 
 @(private="file")
@@ -258,6 +269,25 @@ emitConstant :: proc(value: Value) {
 }
 
 @(private="file")
+emitJump :: proc(instruction: OpCode) -> int {
+    emitByte(instruction)
+    emitByte(0xff)
+    emitByte(0xff)
+    return len(currentChunk().code) - 2
+}
+
+@(private="file")
+emitLoop :: proc(loopStart: int) {
+    emitByte(OpCode.LOOP)
+
+    offset := len(currentChunk().code) - loopStart + 2
+    if offset > U16_MAX do error("Loop body too large.")
+
+    emitByte(u8((offset >> 8)) & 0xff)
+    emitByte(u8(offset & 0xff))
+}
+
+@(private="file")
 emitReturn :: proc() {
     emitByte(OpCode.RETURN)
 }
@@ -322,6 +352,52 @@ expressionStatement :: proc() {
 }
 
 @(private="file")
+forStatement :: proc() {
+    beginScope()
+    consume(TokenType.LEFT_PAREN, "Expect '(' after 'for'.")
+    if match(TokenType.SEMICOLON) {
+        // No initializer
+    } else if match(TokenType.VAR) {
+        varDeclaration()
+    } else {
+        expressionStatement()
+    }
+
+    loopStart := len(currentChunk().code)
+    exitJump := -1
+    if !match(TokenType.SEMICOLON) {
+        expression()
+        consume(TokenType.SEMICOLON, "Expect ';' after loop condition.")
+
+        // Jump out of the loop if the condition is false
+        exitJump = emitJump(OpCode.JUMP_IF_FALSE)
+        emitByte(OpCode.POP)
+    }
+
+    if !match(TokenType.RIGHT_PAREN) {
+        bodyJump := emitJump(OpCode.JUMP)
+        incrementStart := len(currentChunk().code)
+        expression()
+        emitByte(OpCode.POP)
+        consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses.")
+
+        emitLoop(loopStart)
+        loopStart = incrementStart
+        patchJump(bodyJump)
+    }
+
+    statement()
+    emitLoop(loopStart)
+
+    if exitJump != -1 {
+        patchJump(exitJump)
+        emitByte(OpCode.POP)
+    }
+
+    endScope()
+}
+
+@(private="file")
 getRule :: proc(type: TokenType) -> ^ParseRule {
     return &rules[type]
 }
@@ -341,6 +417,26 @@ identifierConstant :: proc(name: ^Token) -> u8 {
 identifiersEqual :: proc(a: ^Token, b: ^Token) -> bool {
     if len(a.value) != len(b.value) do return false
     return strings.compare(a.value, b.value) == 0
+}
+
+@(private="file")
+ifStatement :: proc() {
+    consume(TokenType.LEFT_PAREN, "Expect '(' after 'if'.")
+    expression()
+    consume(TokenType.RIGHT_PAREN, "Expext ')' after condition.")
+
+    thenJump := emitJump(OpCode.JUMP_IF_FALSE)
+    emitByte(OpCode.POP)
+    statement()
+
+    elseJump := emitJump(OpCode.JUMP)
+
+    patchJump(thenJump)
+    emitByte(OpCode.POP)
+
+    if match(TokenType.ELSE) do statement()
+
+    patchJump(elseJump)
 }
 
 @(private="file")
@@ -409,6 +505,31 @@ number :: proc(canAssign: bool) {
 }
 
 @(private="file")
+or_ :: proc(canAssign: bool) {
+    elseJump := emitJump(OpCode.JUMP_IF_FALSE)
+    endJump := emitJump(OpCode.JUMP)
+
+    patchJump(elseJump)
+    emitByte(OpCode.POP)
+
+    parsePrecedence(Precedence.OR)
+    patchJump(endJump)
+}
+
+@(private="file")
+patchJump :: proc(offset: int) {
+    // -2 to adjust for the bytecode for the jump offset itself
+    jump := len(currentChunk().code) - offset - 2
+
+    if jump > U8_MAX {
+        error("Too much code to jump over.")
+    }
+
+    currentChunk().code[offset] = (u8(jump) >> 8) & 0xff
+    currentChunk().code[offset+1] = u8(jump) & 0xff
+}
+
+@(private="file")
 parsePrecedence :: proc(precedence: Precedence) {
     advance()
     prefixRule := getRule(parser.previous.type).prefix
@@ -463,11 +584,17 @@ resolveLocal :: proc(compiler: ^Compiler, name: ^Token) -> int {
 statement :: proc() {
     if match(TokenType.PRINT) {
         printStatement()
+    } else if match(TokenType.FOR) {
+        forStatement()
+    } else if match(TokenType.IF) {
+        ifStatement()
     } else if match(TokenType.LEFT_BRACE) {
         beginScope()
         block()
         endScope()
-    }  else {
+    } else if match(TokenType.WHILE) {
+        whileStatement()
+    } else {
         expressionStatement()
     }
 }
@@ -527,6 +654,22 @@ varDeclaration :: proc() {
 @(private="file")
 variable :: proc(canAssign: bool) {
     namedVariable(parser.previous, canAssign)
+}
+
+@(private="file")
+whileStatement :: proc() {
+    loopStart := len(currentChunk().code)
+    consume(TokenType.LEFT_PAREN, "Expect '(' after 'while'.")
+    expression()
+    consume(TokenType.RIGHT_PAREN, "Expect ')' after condition.")
+
+    exitJump := emitJump(OpCode.JUMP_IF_FALSE)
+    emitByte(OpCode.POP)
+    statement()
+    emitLoop(loopStart)
+
+    patchJump(exitJump)
+    emitByte(OpCode.POP)
 }
 
 @(private="file")

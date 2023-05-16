@@ -38,8 +38,14 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return byteInstruction("OP_GET_LOCAL", chunk, offset)
         case .GREATER:
             return simpleInstruction("OP_GREATER", offset)
+        case .JUMP:
+            return jumpInstruction("OP_JUMP", 1, chunk, offset)
+        case .JUMP_IF_FALSE:
+            return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset)
         case .LESS:
             return simpleInstruction("OP_LESS", offset)
+        case .LOOP:
+            return jumpInstruction("OP_LOOP", -1, chunk, offset)
         case .MULTIPLY:
             return simpleInstruction("OP_MULTIPLY", offset)
         case .NEGATE:
@@ -82,6 +88,14 @@ constantInstruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
     printValue(chunk.constants[constant])
     fmt.printf("'\n")
     return offset + 2
+}
+
+@(private="file")
+jumpInstruction :: proc(name: string, sign: int, chunk: ^Chunk, offset: int) -> int {
+    jump := u16(chunk.code[offset + 1]) << 8
+    jump |= u16(chunk.code[offset + 2])
+    fmt.printf("%-16s %4d -> %d\n", name, offset, offset + 3 + sign + int(jump))
+    return offset + 3
 }
 
 @(private="file")

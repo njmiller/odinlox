@@ -144,6 +144,12 @@ run :: proc() -> InterpretResult {
                 push(BOOL_VAL(a > b))
             case .FALSE:
                 push(BOOL_VAL(false))
+            case .JUMP:
+                offset := read_short()
+                vm.ip += int(offset)
+            case .JUMP_IF_FALSE:
+                offset := read_short()
+                if isFalsey(peek(0)) do vm.ip += int(offset)
             case .LESS:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -152,6 +158,9 @@ run :: proc() -> InterpretResult {
                 b := AS_NUMBER(pop())
                 a := AS_NUMBER(pop())
                 push(BOOL_VAL(a < b))
+            case .LOOP:
+                offset := read_short()
+                vm.ip -= int(offset)
             case .MULTIPLY:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -231,6 +240,12 @@ read_byte :: proc() -> (val: u8) {
 read_constant :: proc() -> Value {
     offset := read_byte()
     return vm.chunk.constants[offset]
+}
+
+read_short :: proc() -> (val: u16) {
+    val = u16(vm.chunk.code[vm.ip]) << 8 | u16(vm.chunk.code[vm.ip+1])
+    vm.ip += 2
+    return
 }
 
 //NJM: Check with -false
