@@ -42,7 +42,14 @@ Local :: struct {
     depth: int,
 }
 
+FunctionType :: enum u8 {
+    FUNCTION,
+    SCRIPT,
+}
+
 Compiler :: struct {
+    function: ^ObjFunction,
+    type: FunctionType,
     locals: [U8_COUNT]Local,
     localCount: int,
     scopeDepth: int,
@@ -97,11 +104,10 @@ rules : []ParseRule = {
     TokenType.EOF           = ParseRule{nil,      nil,    Precedence.NONE},
 }
 
-compile :: proc(source: string, chunk: ^Chunk) -> bool {
+compile :: proc(source: string) -> ^ObjFunction {
     initScanner(source)
     compiler : Compiler
-    initCompiler(&compiler)
-    compilingChunk = chunk
+    initCompiler(&compiler, FunctionType.SCRIPT)
 
     parser.hadError = false
     parser.panicMode = false
@@ -110,15 +116,23 @@ compile :: proc(source: string, chunk: ^Chunk) -> bool {
     for !match(TokenType.EOF) do declaration()
     //expression()
     //consume(.EOF, "Expect end of expression.")
-    endCompiler()
-    return !parser.hadError
+    function := endCompiler()
+    return parser.hadError ? nil : function
 }
 
 @(private="file")
-initCompiler :: proc(compiler: ^Compiler) {
+initCompiler :: proc(compiler: ^Compiler, type: FunctionType) {
+    compiler.function = nil
+    compiler.type = type
     compiler.localCount = 0
     compiler.scopeDepth = 0
+    compiler.function = newFunction()
     current = compiler
+
+    local := &current.locals[current.localCount]
+    current.localCount += 1
+    local.depth = 0
+    local.name.value = ""
 }
 
 @(private="file")
@@ -186,7 +200,7 @@ consume :: proc(type: TokenType, message: string) {
 
 @(private="file")
 currentChunk :: proc() -> ^Chunk {
-    return compilingChunk
+    return &current.function.chunk
 }
 
 @(private="file")
@@ -293,12 +307,16 @@ emitReturn :: proc() {
 }
 
 @(private="file")
-endCompiler :: proc() {
+endCompiler :: proc() -> ^ObjFunction {
     emitReturn()
+    function := current.function
 
     when DEBUG_PRINT_CODE {
-        if !parser.hadError do disassembleChunk(currentChunk(), "code")
+        name := function.name != nil ? function.name.str : "<script>"
+        if !parser.hadError do disassembleChunk(currentChunk(), name)
     }
+
+    return function
 }
 
 @(private="file")

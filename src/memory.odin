@@ -13,7 +13,11 @@ freeObjects :: proc() {
 
 freeObject :: proc(object: ^Obj) {
     switch object.type {
-        case.STRING:
+        case .FUNCTION:
+            objfunction := cast(^ObjFunction) object
+            freeChunk(&objfunction.chunk)
+            free(objfunction)
+        case .STRING:
             objstr := cast(^ObjString) object
             delete(objstr.str)
             free(objstr)

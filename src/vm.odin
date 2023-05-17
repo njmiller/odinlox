@@ -8,11 +8,19 @@ import "core:os"
 import "core:strings"
 
 DEBUG_TRACE_EXECUTION :: ODIN_DEBUG
-STACK_MAX :: 256
+FRAMES_MAX :: 64
+STACK_MAX :: FRAMES_MAX * U8_COUNT
+
+//TODO: Check what I need for slots
+CallFrame :: struct {
+    function: ^ObjFunction,
+    ip: int,
+    slots: []Value, // or ^Value
+}
 
 VM :: struct {
-    chunk: ^Chunk,
-    ip: int,
+    frames: [FRAMES_MAX]CallFrame,
+    frameCount: int,
     stack: [STACK_MAX]Value,
     stackTop: int,
     globals: Table,
@@ -30,6 +38,7 @@ vm : VM
 
 resetStack  :: proc() {
     vm.stackTop = 0
+    vm.frameCount = 0
 }
 
 initVM :: proc() {
@@ -83,6 +92,8 @@ pop :: proc() -> Value {
 run :: proc() -> InterpretResult {
     instruction : OpCode
 
+    frame := &vm.frames[vm.frameCount - 1]
+
     for {
         when DEBUG_TRACE_EXECUTION {
             fmt.printf("       ")
@@ -92,9 +103,9 @@ run :: proc() -> InterpretResult {
                 fmt.printf(" ]")
             }
             fmt.printf("\n")
-            disassembleInstruction(vm.chunk, vm.ip)
+            disassembleInstruction(&frame.function.chunk, frame.ip)
         }
-        instruction = auto_cast read_byte()
+        instruction = auto_cast read_byte(frame)
         switch instruction {
             case .ADD:
                 if IS_STRING(peek(0)) && IS_STRING(peek(1)) {
@@ -108,7 +119,7 @@ run :: proc() -> InterpretResult {
                     return InterpretResult.RUNTIME_ERROR
                 }
             case .DEFINE_GLOBAL:
-                name := AS_OBJSTRING(read_constant())
+                name := AS_OBJSTRING(read_constant(frame))
                 tableSet(&vm.globals, name, peek(0))
                 pop()
             case .DIVIDE:
@@ -124,7 +135,7 @@ run :: proc() -> InterpretResult {
                 a := pop()
                 push(BOOL_VAL(valuesEqual(a, b)))
             case .GET_GLOBAL:
-                name := AS_OBJSTRING(read_constant())
+                name := AS_OBJSTRING(read_constant(frame))
                 value: Value
                 if !tableGet(&vm.globals, name, &value) {
                     runtimeError("Undefined variable '%s'.", name.str)
@@ -132,8 +143,8 @@ run :: proc() -> InterpretResult {
                 }
                 push(value)
             case .GET_LOCAL:
-                slot := read_byte()
-                push(vm.stack[slot])
+                slot := read_byte(frame)
+                push(frame.slots[slot])
             case .GREATER:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -145,11 +156,11 @@ run :: proc() -> InterpretResult {
             case .FALSE:
                 push(BOOL_VAL(false))
             case .JUMP:
-                offset := read_short()
-                vm.ip += int(offset)
+                offset := read_short(frame)
+                frame.ip += int(offset)
             case .JUMP_IF_FALSE:
-                offset := read_short()
-                if isFalsey(peek(0)) do vm.ip += int(offset)
+                offset := read_short(frame)
+                if isFalsey(peek(0)) do frame.ip += int(offset)
             case .LESS:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -159,8 +170,8 @@ run :: proc() -> InterpretResult {
                 a := AS_NUMBER(pop())
                 push(BOOL_VAL(a < b))
             case .LOOP:
-                offset := read_short()
-                vm.ip -= int(offset)
+                offset := read_short(frame)
+                frame.ip -= int(offset)
             case .MULTIPLY:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -188,15 +199,15 @@ run :: proc() -> InterpretResult {
                 // Exit interpreter
                 return .OK
             case .SET_GLOBAL:
-                name := AS_OBJSTRING(read_constant())
+                name := AS_OBJSTRING(read_constant(frame))
                 if tableSet(&vm.globals, name, peek(0)) {
                     tableDelete(&vm.globals, name)
                     runtimeError("Undefined variable '%s'.", name.str)
                     return InterpretResult.RUNTIME_ERROR
                 }
             case .SET_LOCAL:
-                slot := read_byte()
-                vm.stack[slot] = peek(0)
+                slot := read_byte(frame)
+                frame.slots[slot] = peek(0)
             case .SUBTRACT:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -208,43 +219,46 @@ run :: proc() -> InterpretResult {
             case.TRUE:
                 push(BOOL_VAL(true))
             case .CONSTANT:
-                constant := read_constant()
+                constant := read_constant(frame)
                 push(constant)
         }
     }
 }
 
 interpret :: proc(source: string) -> InterpretResult {
-    chunk : Chunk
+    function := compile(source)
+    if function == nil do return InterpretResult.COMPILE_ERROR
 
-    if !compile(source, &chunk) {
-        freeChunk(&chunk)
-        return .COMPILE_ERROR
-    }
+    push(OBJ_VAL(function))
+    frame := &vm.frames[vm.frameCount]
+    vm.frameCount += 1
+    frame.function = function
+    frame.ip = 0
+    frame.slots = vm.stack[:]
 
-    vm.chunk = &chunk
-    vm.ip = 0
-
-    result := run()
-
-    freeChunk(&chunk)
-    return result
+    return run()
 }
 
-read_byte :: proc() -> (val: u8) {
-    val = vm.chunk.code[vm.ip]
-    vm.ip += 1
+@(private="file")
+read_byte :: proc(frame: ^CallFrame) -> (val: u8) {
+    //frame := &vm.frames[vm.frameCount - 1]
+    val = frame.function.chunk.code[frame.ip]
+    frame.ip += 1
     return
 }
 
-read_constant :: proc() -> Value {
-    offset := read_byte()
-    return vm.chunk.constants[offset]
+@(private="file")
+read_constant :: proc(frame: ^CallFrame) -> Value {
+    //frame := &vm.frames[vm.frameCount - 1]
+    offset := read_byte(frame)
+    return frame.function.chunk.constants[offset]
 }
 
-read_short :: proc() -> (val: u16) {
-    val = u16(vm.chunk.code[vm.ip]) << 8 | u16(vm.chunk.code[vm.ip+1])
-    vm.ip += 2
+@(private="file")
+read_short :: proc(frame: ^CallFrame) -> (val: u16) {
+    //frame := &vm.frames[vm.frameCount - 1]
+    val = u16(frame.function.chunk.code[frame.ip]) << 8 | u16(frame.function.chunk.code[frame.ip+1])
+    frame.ip += 2
     return
 }
 
@@ -254,8 +268,9 @@ runtimeError :: proc(format: string, args: ..any) {
     fmt.fprintf(fd=os.stderr, fmt=format, args=args)
     fmt.fprintf(os.stderr, "\n")
 
-    inst_index := vm.ip - 1
-    line := vm.chunk.lines[inst_index]
+    frame := &vm.frames[vm.frameCount - 1]
+    inst_index := frame.ip - 1
+    line := frame.function.chunk.lines[inst_index]
     fmt.fprintf(os.stderr, "[line %d] in script\n", line)
     resetStack()
 }

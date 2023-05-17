@@ -62,6 +62,11 @@ addConstant :: proc(chunk: ^Chunk, value: Value) -> int {
     return len(chunk.constants) - 1
 }
 
+initChunk :: proc(chunk: ^Chunk) {
+    // Do nothing since everything is a dynamic array
+    return
+}
+
 freeChunk :: proc(chunk: ^Chunk) {
     delete(chunk.code)
     delete(chunk.constants)
