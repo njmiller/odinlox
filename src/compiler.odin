@@ -48,11 +48,12 @@ FunctionType :: enum u8 {
 }
 
 Compiler :: struct {
-    function: ^ObjFunction,
-    type: FunctionType,
-    locals: [U8_COUNT]Local,
-    localCount: int,
-    scopeDepth: int,
+    enclosing : ^Compiler,
+    function : ^ObjFunction,
+    type : FunctionType,
+    locals : [U8_COUNT]Local,
+    localCount : int,
+    scopeDepth : int,
 }
 
 ParseFn :: #type proc(canAssign: bool)
@@ -122,13 +123,17 @@ compile :: proc(source: string) -> ^ObjFunction {
 
 @(private="file")
 initCompiler :: proc(compiler: ^Compiler, type: FunctionType) {
+    compiler.enclosing = current
     compiler.function = nil
     compiler.type = type
     compiler.localCount = 0
     compiler.scopeDepth = 0
     compiler.function = newFunction()
     current = compiler
-
+    if type != FunctionType.SCRIPT {
+        current.function.name = copyString(parser.previous.value)
+    }
+    
     local := &current.locals[current.localCount]
     current.localCount += 1
     local.depth = 0
@@ -205,7 +210,9 @@ currentChunk :: proc() -> ^Chunk {
 
 @(private="file")
 declaration :: proc() {
-    if match(TokenType.VAR) {
+    if match(TokenType.FUN) {
+        funDeclaration()
+    } else if match(TokenType.VAR) {
         varDeclaration()
     } else {
         statement()
@@ -316,6 +323,7 @@ endCompiler :: proc() -> ^ObjFunction {
         if !parser.hadError do disassembleChunk(currentChunk(), name)
     }
 
+    current = current.enclosing
     return function
 }
 
@@ -416,6 +424,38 @@ forStatement :: proc() {
 }
 
 @(private="file")
+function :: proc(type: FunctionType) {
+    compiler : Compiler
+    initCompiler(&compiler, type)
+    beginScope()
+
+    consume(TokenType.LEFT_PAREN, "Expect '(' after function name.")
+    if !check(TokenType.RIGHT_PAREN) {
+        for {
+            current.function.arity += 1
+            if current.function.arity > 255 do errorAtCurrent("Can't have more than 255 parameters.")
+            constant := parseVariable("Expect parameter name.")
+            defineVariable(constant)
+            if !match(TokenType.COMMA) do break
+        }
+    }
+    consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters.")
+    consume(TokenType.LEFT_BRACE, "Expect '{' before function body.")
+    block()
+
+    funct := endCompiler()
+    emitBytes(OpCode.CONSTANT, makeConstant(OBJ_VAL(funct)))
+}
+
+@(private="file")
+funDeclaration :: proc() {
+    global := parseVariable("Expect function name.")
+    markInitialized()
+    function(FunctionType.FUNCTION)
+    defineVariable(global)
+}
+
+@(private="file")
 getRule :: proc(type: TokenType) -> ^ParseRule {
     return &rules[type]
 }
@@ -483,6 +523,7 @@ makeConstant :: proc(value: Value) -> u8 {
 
 @(private="file")
 markInitialized :: proc() {
+    if current.scopeDepth == 0 do return
     current.locals[current.localCount - 1].depth = current.scopeDepth
 }
 
