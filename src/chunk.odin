@@ -4,6 +4,7 @@ import "core:fmt"
 
 OpCode :: enum u8 {
     ADD,
+    CALL,
     CONSTANT,
     DEFINE_GLOBAL,
     DIVIDE,

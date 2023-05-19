@@ -63,7 +63,7 @@ current : ^Compiler = nil
 compilingChunk : ^Chunk
 
 rules : []ParseRule = {
-    TokenType.LEFT_PAREN    = ParseRule{grouping, nil,    Precedence.NONE},
+    TokenType.LEFT_PAREN    = ParseRule{grouping, call,   Precedence.CALL},
     TokenType.RIGHT_PAREN   = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.LEFT_BRACE    = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.RIGHT_BRACE   = ParseRule{nil,      nil,    Precedence.NONE},
@@ -133,7 +133,7 @@ initCompiler :: proc(compiler: ^Compiler, type: FunctionType) {
     if type != FunctionType.SCRIPT {
         current.function.name = copyString(parser.previous.value)
     }
-    
+
     local := &current.locals[current.localCount]
     current.localCount += 1
     local.depth = 0
@@ -175,6 +175,22 @@ and_ :: proc(canAssign: bool) {
 }
 
 @(private="file")
+argumentList :: proc() -> u8 {
+    argCount : u8 = 0
+    if !check(TokenType.RIGHT_PAREN) {
+        for {
+            expression()
+            if argCount == 255 do error("Can't have more than 255 arguments.")
+            argCount += 1
+            if !match(TokenType.COMMA) do break
+        }
+    }
+
+    consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.")
+    return argCount
+}
+
+@(private="file")
 beginScope :: proc() {
     current.scopeDepth += 1
 }
@@ -186,6 +202,12 @@ block :: proc() {
     }
 
     consume(TokenType.RIGHT_BRACE, "Expect '}' after block.")
+}
+
+@(private="file")
+call :: proc(canAssign: bool) {
+    argCount := argumentList()
+    emitBytes(OpCode.CALL, argCount)
 }
 
 @(private="file")
@@ -310,6 +332,7 @@ emitLoop :: proc(loopStart: int) {
 
 @(private="file")
 emitReturn :: proc() {
+    emitByte(OpCode.NIL)
     emitByte(OpCode.RETURN)
 }
 
@@ -640,6 +663,19 @@ resolveLocal :: proc(compiler: ^Compiler, name: ^Token) -> int {
 }
 
 @(private="file")
+returnStatement :: proc() {
+    if current.type == FunctionType.SCRIPT do error("Can't return from top-level code.")
+    
+    if match(TokenType.SEMICOLON) {
+        emitReturn()
+    } else {
+        expression()
+        consume(TokenType.SEMICOLON, "Expect ';' after return value.")
+        emitByte(OpCode.RETURN)
+    }
+}
+
+@(private="file")
 statement :: proc() {
     if match(TokenType.PRINT) {
         printStatement()
@@ -651,6 +687,8 @@ statement :: proc() {
         beginScope()
         block()
         endScope()
+    } else if match(TokenType.RETURN) {
+        returnStatement()
     } else if match(TokenType.WHILE) {
         whileStatement()
     } else {

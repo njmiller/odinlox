@@ -22,6 +22,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
     switch instruction {
         case .ADD:
             return simpleInstruction("OP_ADD", offset)
+        case .CALL:
+            return byteInstruction("OP_CALL", chunk, offset)
         case .CONSTANT:
             return constantInstruction("OP_CONSTANT", chunk, offset)
         case .DEFINE_GLOBAL:

@@ -17,6 +17,9 @@ freeObject :: proc(object: ^Obj) {
             objfunction := cast(^ObjFunction) object
             freeChunk(&objfunction.chunk)
             free(objfunction)
+        case .NATIVE:
+            objnative := cast(^ObjNative) object
+            free(objnative)
         case .STRING:
             objstr := cast(^ObjString) object
             delete(objstr.str)

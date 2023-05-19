@@ -6,6 +6,7 @@ package odinlox
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 
 DEBUG_TRACE_EXECUTION :: ODIN_DEBUG
 FRAMES_MAX :: 64
@@ -46,6 +47,8 @@ initVM :: proc() {
     vm.objects = nil
     initTable(&vm.strings)
     initTable(&vm.globals)
+
+    defineNative("clock", clockNative)
 }
 
 freeVM :: proc() {
@@ -57,6 +60,50 @@ freeVM :: proc() {
 @(private="file")
 isFalsey :: proc(value: Value) -> bool {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value))
+}
+
+@(private="file")
+call :: proc(function: ^ObjFunction, argCount: int) -> bool {
+    if argCount != function.arity {
+        runtimeError("Expected %d arguments but got %d.", function.arity, argCount)
+        return false
+    }
+
+    if vm.frameCount == FRAMES_MAX {
+        runtimeError("Stack overflow.")
+        return false
+    }
+
+    frame := &vm.frames[vm.frameCount]
+    vm.frameCount += 1
+    frame.function = function
+    frame.ip = 0
+    frame.slots = vm.stack[vm.stackTop - argCount - 1:]
+    return true
+}
+
+@(private="file")
+callValue :: proc(callee: Value, argCount: int) -> bool {
+    if IS_OBJ(callee) {
+        #partial switch (OBJ_TYPE(callee)) {
+            case .FUNCTION:
+                return call(AS_FUNCTION(callee), argCount)
+            case .NATIVE:
+                native := AS_NATIVE(callee)
+                result := native(argCount, vm.stack[vm.stackTop-argCount:vm.stackTop])
+                vm.stackTop -= argCount + 1
+                push(result)
+                return true
+        }
+    }
+
+    runtimeError("Can only call functions and classes.")
+    return false
+}
+
+@(private="file")
+clockNative :: proc(argCount: int, args: []Value) -> Value {
+    return NUMBER_VAL(f64(time.now()._nsec / 1000000000))
 }
 
 @(private="file")
@@ -72,6 +119,15 @@ concatenate :: proc() {
     //NJM: Check. I don't think I need to delete a or b since they are part of the
     //objects which will be garbage collected. C is cloned for result so we can delete it
     delete(c)
+}
+
+@(private="file")
+defineNative :: proc(name: string, function: NativeFn) {
+    push(OBJ_VAL(copyString(name)))
+    push(OBJ_VAL(newNative(function)))
+    tableSet(&vm.globals, AS_OBJSTRING(vm.stack[0]), vm.stack[1])
+    pop()
+    pop()
 }
 
 @(private="file")
@@ -118,6 +174,10 @@ run :: proc() -> InterpretResult {
                     runtimeError("Operands must be two numbers or two strings.")
                     return InterpretResult.RUNTIME_ERROR
                 }
+            case .CALL:
+                argCount := int(read_byte(frame))
+                if !callValue(peek(argCount), argCount) do return InterpretResult.RUNTIME_ERROR
+                frame = &vm.frames[vm.frameCount - 1]
             case .DEFINE_GLOBAL:
                 name := AS_OBJSTRING(read_constant(frame))
                 tableSet(&vm.globals, name, peek(0))
@@ -196,8 +256,18 @@ run :: proc() -> InterpretResult {
                 printValue(pop())
                 fmt.printf("\n")
             case .RETURN:
-                // Exit interpreter
-                return .OK
+                result := pop()
+                vm.frameCount -= 1
+                if vm.frameCount == 0 {
+                    pop()
+                    return InterpretResult.OK
+                }
+
+                //NJM: Check. Need to figure our what stackTop is right now
+                //and what it should be after the return
+                vm.stackTop -= frame.function.arity + 1
+                push(result)
+                frame = &vm.frames[vm.frameCount - 1]
             case .SET_GLOBAL:
                 name := AS_OBJSTRING(read_constant(frame))
                 if tableSet(&vm.globals, name, peek(0)) {
@@ -230,11 +300,12 @@ interpret :: proc(source: string) -> InterpretResult {
     if function == nil do return InterpretResult.COMPILE_ERROR
 
     push(OBJ_VAL(function))
-    frame := &vm.frames[vm.frameCount]
-    vm.frameCount += 1
-    frame.function = function
-    frame.ip = 0
-    frame.slots = vm.stack[:]
+    call(function, 0)
+    //frame := &vm.frames[vm.frameCount]
+    //vm.frameCount += 1
+    //frame.function = function
+    //frame.ip = 0
+    //frame.slots = vm.stack[:]
 
     return run()
 }
@@ -268,9 +339,24 @@ runtimeError :: proc(format: string, args: ..any) {
     fmt.fprintf(fd=os.stderr, fmt=format, args=args)
     fmt.fprintf(os.stderr, "\n")
 
+    /*
     frame := &vm.frames[vm.frameCount - 1]
     inst_index := frame.ip - 1
     line := frame.function.chunk.lines[inst_index]
     fmt.fprintf(os.stderr, "[line %d] in script\n", line)
+    */
+
+    for i := vm.frameCount - 1; i >= 0; i = i-1 {
+        frame := &vm.frames[i]
+        function := frame.function
+        inst_index := frame.ip - i
+        fmt.fprintf(os.stderr, "[line %d] in ", function.chunk.lines[inst_index])
+        if function.name == nil {
+            fmt.fprintf(os.stderr, "script\n")
+        } else {
+            fmt.fprintf(os.stderr, "%s()\n", function.name.str)
+        }
+    }
+
     resetStack()
 }

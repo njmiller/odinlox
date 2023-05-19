@@ -5,6 +5,7 @@ import "core:fmt"
 
 ObjType :: enum u8 {
     FUNCTION,
+    NATIVE,
     STRING,
 }
 
@@ -26,16 +27,25 @@ ObjString :: struct {
     hash: u32,
 }
 
+NativeFn :: #type proc(argCount: int, args: []Value) -> Value
+
+ObjNative :: struct {
+    using obj: Obj,
+    function: NativeFn,
+}
+
 //NJM: C code did this is macros which is why IS_STRING calls a separate function.
 //Maybe refactor??
 
-//OBJ_TYPE :: proc(value: Value) -> ObjType { return AS_OBJ(value).type}
+OBJ_TYPE :: proc(value: Value) -> ObjType { return AS_OBJ(value).type}
 IS_STRING:: proc(value: Value) -> bool { return isObjType(value, ObjType.STRING)}
 IS_FUNCTION :: proc(value: Value) -> bool { return isObjType(value, ObjType.FUNCTION)}
+IS_NATIVE :: proc(value: Value) -> bool { return isObjType(value, ObjType.NATIVE)}
 
 //Returning pointers to the different Object types from the Value structure
 AS_OBJSTRING :: proc(value: Value) -> ^ObjString { return cast(^ObjString) AS_OBJ(value) }
 AS_FUNCTION :: proc(value: Value) -> ^ObjFunction { return cast(^ObjFunction) AS_OBJ(value)}
+AS_NATIVE :: proc(value: Value) -> NativeFn { return (cast(^ObjNative) AS_OBJ(value)).function}
 
 //Unboxing object data
 AS_STRING :: proc(value: Value) -> string { return AS_OBJSTRING(value).str }
@@ -92,6 +102,12 @@ newFunction :: proc() -> ^ObjFunction {
     return function
 }
 
+newNative :: proc(function: NativeFn) -> ^ObjNative {
+    native := allocateObject(ObjNative, ObjType.NATIVE)
+    native.function = function
+    return native
+}
+
 printFunction :: proc(function: ^ObjFunction) {
     if function.name == nil {
         fmt.printf("<script>")
@@ -105,6 +121,8 @@ printObject :: proc(value: Value) {
     switch obj.type {
         case .FUNCTION:
             printFunction(AS_FUNCTION(value))
+        case .NATIVE:
+            fmt.printf("<native fn>")
         case .STRING:
             fmt.printf("%s", (cast(^ObjString) obj).str)
     }
