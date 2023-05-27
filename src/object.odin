@@ -4,9 +4,11 @@ import "core:strings"
 import "core:fmt"
 
 ObjType :: enum u8 {
+    CLOSURE,
     FUNCTION,
     NATIVE,
     STRING,
+    UPVALUE,
 }
 
 Obj :: struct {
@@ -14,9 +16,16 @@ Obj :: struct {
     next: ^Obj,
 }
 
+ObjClosure :: struct {
+    using obj: Obj,
+    function: ^ObjFunction,
+    upvalues: []^ObjUpvalue,
+}
+
 ObjFunction :: struct {
     using obj: Obj,
     arity: int,
+    upvalueCount: int,
     chunk: Chunk,
     name: ^ObjString,
 }
@@ -34,6 +43,13 @@ ObjNative :: struct {
     function: NativeFn,
 }
 
+ObjUpvalue :: struct {
+    using obj: Obj,
+    location: ^Value,
+    closed: Value,
+    nextUV: ^ObjUpvalue,
+}
+
 //NJM: C code did this is macros which is why IS_STRING calls a separate function.
 //Maybe refactor??
 
@@ -41,11 +57,13 @@ OBJ_TYPE :: proc(value: Value) -> ObjType { return AS_OBJ(value).type}
 IS_STRING:: proc(value: Value) -> bool { return isObjType(value, ObjType.STRING)}
 IS_FUNCTION :: proc(value: Value) -> bool { return isObjType(value, ObjType.FUNCTION)}
 IS_NATIVE :: proc(value: Value) -> bool { return isObjType(value, ObjType.NATIVE)}
+IS_CLOSURE :: proc(value: Value) -> bool { return isObjType(value, ObjType.CLOSURE)}
 
 //Returning pointers to the different Object types from the Value structure
 AS_OBJSTRING :: proc(value: Value) -> ^ObjString { return cast(^ObjString) AS_OBJ(value) }
 AS_FUNCTION :: proc(value: Value) -> ^ObjFunction { return cast(^ObjFunction) AS_OBJ(value)}
 AS_NATIVE :: proc(value: Value) -> NativeFn { return (cast(^ObjNative) AS_OBJ(value)).function}
+AS_CLOSURE :: proc(value: Value) -> ^ObjClosure { return cast(^ObjClosure) AS_OBJ(value) }
 
 //Unboxing object data
 AS_STRING :: proc(value: Value) -> string { return AS_OBJSTRING(value).str }
@@ -94,9 +112,20 @@ isObjType :: proc(value: Value, type: ObjType) -> bool {
     return IS_OBJ(value) && (AS_OBJ(value).type == type)
 }
 
+newClosure :: proc(function: ^ObjFunction) -> ^ObjClosure {
+    upvalues := make([]^ObjUpvalue, function.upvalueCount)
+
+    closure := allocateObject(ObjClosure, ObjType.CLOSURE)
+    closure.function = function
+    closure.upvalues = upvalues
+
+    return closure
+}
+
 newFunction :: proc() -> ^ObjFunction {
     function := allocateObject(ObjFunction, ObjType.FUNCTION)
     function.arity = 0
+    function.upvalueCount = 0
     function.name = nil
     //initChunk(&function.chunk)
     return function
@@ -106,6 +135,14 @@ newNative :: proc(function: NativeFn) -> ^ObjNative {
     native := allocateObject(ObjNative, ObjType.NATIVE)
     native.function = function
     return native
+}
+
+newUpvalue :: proc(slot: ^Value) -> ^ObjUpvalue {
+    upvalue := allocateObject(ObjUpvalue, ObjType.UPVALUE)
+    upvalue.closed = NIL_VAL()
+    upvalue.location = slot
+    upvalue.nextUV = nil
+    return upvalue
 }
 
 printFunction :: proc(function: ^ObjFunction) {
@@ -119,12 +156,16 @@ printFunction :: proc(function: ^ObjFunction) {
 printObject :: proc(value: Value) {
     obj := AS_OBJ(value)
     switch obj.type {
+        case .CLOSURE:
+            printFunction(AS_CLOSURE(value).function)
         case .FUNCTION:
             printFunction(AS_FUNCTION(value))
         case .NATIVE:
             fmt.printf("<native fn>")
         case .STRING:
             fmt.printf("%s", (cast(^ObjString) obj).str)
+        case .UPVALUE:
+            fmt.printf("upvalue")
     }
 }
 

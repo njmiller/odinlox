@@ -14,7 +14,7 @@ STACK_MAX :: FRAMES_MAX * U8_COUNT
 
 //TODO: Check what I need for slots
 CallFrame :: struct {
-    function: ^ObjFunction,
+    closure: ^ObjClosure,
     ip: int,
     slots: []Value, // or ^Value
 }
@@ -26,6 +26,7 @@ VM :: struct {
     stackTop: int,
     globals: Table,
     strings: Table,
+    openUpvalues: ^ObjUpvalue,
     objects: ^Obj,
 }
 
@@ -40,6 +41,7 @@ vm : VM
 resetStack  :: proc() {
     vm.stackTop = 0
     vm.frameCount = 0
+    vm.openUpvalues = nil
 }
 
 initVM :: proc() {
@@ -63,9 +65,9 @@ isFalsey :: proc(value: Value) -> bool {
 }
 
 @(private="file")
-call :: proc(function: ^ObjFunction, argCount: int) -> bool {
-    if argCount != function.arity {
-        runtimeError("Expected %d arguments but got %d.", function.arity, argCount)
+call :: proc(closure: ^ObjClosure, argCount: int) -> bool {
+    if argCount != closure.function.arity {
+        runtimeError("Expected %d arguments but got %d.", closure.function.arity, argCount)
         return false
     }
 
@@ -76,7 +78,7 @@ call :: proc(function: ^ObjFunction, argCount: int) -> bool {
 
     frame := &vm.frames[vm.frameCount]
     vm.frameCount += 1
-    frame.function = function
+    frame.closure = closure
     frame.ip = 0
     frame.slots = vm.stack[vm.stackTop - argCount - 1:]
     return true
@@ -86,8 +88,10 @@ call :: proc(function: ^ObjFunction, argCount: int) -> bool {
 callValue :: proc(callee: Value, argCount: int) -> bool {
     if IS_OBJ(callee) {
         #partial switch (OBJ_TYPE(callee)) {
-            case .FUNCTION:
-                return call(AS_FUNCTION(callee), argCount)
+            case .CLOSURE:
+                return call(AS_CLOSURE(callee), argCount)
+            //case .FUNCTION:
+            //    return call(AS_FUNCTION(callee), argCount)
             case .NATIVE:
                 native := AS_NATIVE(callee)
                 result := native(argCount, vm.stack[vm.stackTop-argCount:vm.stackTop])
@@ -102,10 +106,44 @@ callValue :: proc(callee: Value, argCount: int) -> bool {
 }
 
 @(private="file")
+captureUpvalue :: proc(local: ^Value) -> ^ObjUpvalue {
+    prevUpvalue : ^ObjUpvalue
+    upvalue := vm.openUpvalues
+    for upvalue != nil && upvalue.location > local {
+        prevUpvalue = upvalue
+        upvalue = upvalue.nextUV
+    }
+
+    if upvalue != nil && upvalue.location == local {
+        return upvalue
+    }
+
+    createdUpvalue := newUpvalue(local)
+    createdUpvalue.nextUV = upvalue
+
+    if prevUpvalue == nil {
+        vm.openUpvalues = createdUpvalue
+    } else {
+        prevUpvalue.nextUV = createdUpvalue
+    }
+
+    return createdUpvalue
+}
+
+@(private="file")
 clockNative :: proc(argCount: int, args: []Value) -> Value {
     return NUMBER_VAL(f64(time.now()._nsec / 1000000000))
 }
 
+@(private="file")
+closeUpvalues :: proc(last: ^Value) {
+    for vm.openUpvalues != nil && vm.openUpvalues.location >= last {
+        upvalue := vm.openUpvalues
+        upvalue.closed = upvalue.location^
+        upvalue.location = &upvalue.closed
+        vm.openUpvalues = upvalue.nextUV
+    }
+}
 @(private="file")
 concatenate :: proc() {
     b := AS_STRING(pop())
@@ -159,7 +197,7 @@ run :: proc() -> InterpretResult {
                 fmt.printf(" ]")
             }
             fmt.printf("\n")
-            disassembleInstruction(&frame.function.chunk, frame.ip)
+            disassembleInstruction(&frame.closure.function.chunk, frame.ip)
         }
         instruction = auto_cast read_byte(frame)
         switch instruction {
@@ -178,6 +216,22 @@ run :: proc() -> InterpretResult {
                 argCount := int(read_byte(frame))
                 if !callValue(peek(argCount), argCount) do return InterpretResult.RUNTIME_ERROR
                 frame = &vm.frames[vm.frameCount - 1]
+            case .CLOSE_UPVALUE:
+                closeUpvalues(&vm.stack[vm.stackTop - 1])
+                pop()
+            case .CLOSURE:
+                function := AS_FUNCTION(read_constant(frame))
+                closure := newClosure(function)
+                push(OBJ_VAL(closure))
+                for i := 0; i < len(closure.upvalues); i += 1 {
+                    isLocal := read_byte(frame)
+                    index := read_byte(frame)
+                    if isLocal > 0 {
+                        closure.upvalues[i] = captureUpvalue(&frame.slots[index])
+                    } else {
+                        closure.upvalues[i] = frame.closure.upvalues[index]
+                    }
+                }
             case .DEFINE_GLOBAL:
                 name := AS_OBJSTRING(read_constant(frame))
                 tableSet(&vm.globals, name, peek(0))
@@ -205,6 +259,9 @@ run :: proc() -> InterpretResult {
             case .GET_LOCAL:
                 slot := read_byte(frame)
                 push(frame.slots[slot])
+            case .GET_UPVALUE:
+                slot := read_byte(frame)
+                push(frame.closure.upvalues[slot].location^)
             case .GREATER:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -257,6 +314,7 @@ run :: proc() -> InterpretResult {
                 fmt.printf("\n")
             case .RETURN:
                 result := pop()
+                closeUpvalues(&frame.slots[0])
                 vm.frameCount -= 1
                 if vm.frameCount == 0 {
                     pop()
@@ -265,7 +323,7 @@ run :: proc() -> InterpretResult {
 
                 //NJM: Check. Need to figure our what stackTop is right now
                 //and what it should be after the return
-                vm.stackTop -= frame.function.arity + 1
+                vm.stackTop -= frame.closure.function.arity + 1
                 push(result)
                 frame = &vm.frames[vm.frameCount - 1]
             case .SET_GLOBAL:
@@ -278,6 +336,9 @@ run :: proc() -> InterpretResult {
             case .SET_LOCAL:
                 slot := read_byte(frame)
                 frame.slots[slot] = peek(0)
+            case .SET_UPVALUE:
+                slot := read_byte(frame)
+                frame.closure.upvalues[slot].location^ = peek(0)
             case .SUBTRACT:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -300,12 +361,10 @@ interpret :: proc(source: string) -> InterpretResult {
     if function == nil do return InterpretResult.COMPILE_ERROR
 
     push(OBJ_VAL(function))
-    call(function, 0)
-    //frame := &vm.frames[vm.frameCount]
-    //vm.frameCount += 1
-    //frame.function = function
-    //frame.ip = 0
-    //frame.slots = vm.stack[:]
+    closure := newClosure(function)
+    pop()
+    push(OBJ_VAL(closure))
+    call(closure, 0)
 
     return run()
 }
@@ -313,7 +372,7 @@ interpret :: proc(source: string) -> InterpretResult {
 @(private="file")
 read_byte :: proc(frame: ^CallFrame) -> (val: u8) {
     //frame := &vm.frames[vm.frameCount - 1]
-    val = frame.function.chunk.code[frame.ip]
+    val = frame.closure.function.chunk.code[frame.ip]
     frame.ip += 1
     return
 }
@@ -322,13 +381,13 @@ read_byte :: proc(frame: ^CallFrame) -> (val: u8) {
 read_constant :: proc(frame: ^CallFrame) -> Value {
     //frame := &vm.frames[vm.frameCount - 1]
     offset := read_byte(frame)
-    return frame.function.chunk.constants[offset]
+    return frame.closure.function.chunk.constants[offset]
 }
 
 @(private="file")
 read_short :: proc(frame: ^CallFrame) -> (val: u16) {
     //frame := &vm.frames[vm.frameCount - 1]
-    val = u16(frame.function.chunk.code[frame.ip]) << 8 | u16(frame.function.chunk.code[frame.ip+1])
+    val = u16(frame.closure.function.chunk.code[frame.ip]) << 8 | u16(frame.closure.function.chunk.code[frame.ip+1])
     frame.ip += 2
     return
 }
@@ -348,7 +407,7 @@ runtimeError :: proc(format: string, args: ..any) {
 
     for i := vm.frameCount - 1; i >= 0; i = i-1 {
         frame := &vm.frames[i]
-        function := frame.function
+        function := frame.closure.function
         inst_index := frame.ip - i
         fmt.fprintf(os.stderr, "[line %d] in ", function.chunk.lines[inst_index])
         if function.name == nil {

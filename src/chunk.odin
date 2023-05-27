@@ -5,6 +5,8 @@ import "core:fmt"
 OpCode :: enum u8 {
     ADD,
     CALL,
+    CLOSE_UPVALUE,
+    CLOSURE,
     CONSTANT,
     DEFINE_GLOBAL,
     DIVIDE,
@@ -12,6 +14,7 @@ OpCode :: enum u8 {
     FALSE,
     GET_GLOBAL,
     GET_LOCAL,
+    GET_UPVALUE,
     GREATER,
     JUMP,
     JUMP_IF_FALSE,
@@ -23,9 +26,10 @@ OpCode :: enum u8 {
     NOT,
     POP,
     PRINT,
+    RETURN,
     SET_GLOBAL,
     SET_LOCAL,
-    RETURN,
+    SET_UPVALUE,
     TRUE,
     SUBTRACT,
 }

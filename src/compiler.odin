@@ -40,6 +40,12 @@ ParseRule :: struct {
 Local :: struct {
     name: Token,
     depth: int,
+    isCaptured: bool,
+}
+
+Upvalue :: struct {
+    index: int,
+    isLocal: bool,
 }
 
 FunctionType :: enum u8 {
@@ -53,6 +59,7 @@ Compiler :: struct {
     type : FunctionType,
     locals : [U8_COUNT]Local,
     localCount : int,
+    upvalues : [U8_COUNT]Upvalue,
     scopeDepth : int,
 }
 
@@ -137,6 +144,7 @@ initCompiler :: proc(compiler: ^Compiler, type: FunctionType) {
     local := &current.locals[current.localCount]
     current.localCount += 1
     local.depth = 0
+    local.isCaptured = false
     local.name.value = ""
 }
 
@@ -151,6 +159,30 @@ addLocal :: proc(name: Token) {
     current.localCount += 1
     local.name = name
     local.depth = -1
+    local.isCaptured = false
+}
+
+@(private="file")
+addUpvalue :: proc(compiler: ^Compiler, index: int, isLocal: bool) -> int {
+    upvalueCount := compiler.function.upvalueCount
+
+    for i := 0; i < upvalueCount; i += 1 {
+        upvalue := &compiler.upvalues[i]
+        if upvalue.index == index && upvalue.isLocal == isLocal {
+            return i
+        }
+    }
+
+    if upvalueCount == U8_COUNT {
+        error("Too many closure variables in function.")
+        return 0
+    }
+
+    compiler.upvalues[upvalueCount].isLocal = isLocal
+    compiler.upvalues[upvalueCount].index = index
+
+    compiler.function.upvalueCount += 1
+    return compiler.function.upvalueCount - 1
 }
 
 @(private="file")
@@ -355,7 +387,11 @@ endScope :: proc() {
     current.scopeDepth -= 1
 
     for current.localCount > 0 && current.locals[current.localCount - 1].depth > current.scopeDepth {
-        emitByte(OpCode.POP)
+        if current.locals[current.localCount - 1].isCaptured {
+            emitByte(OpCode.CLOSE_UPVALUE)
+        } else {
+            emitByte(OpCode.POP)
+        }
         current.localCount -= 1
     }
 }
@@ -466,8 +502,14 @@ function :: proc(type: FunctionType) {
     consume(TokenType.LEFT_BRACE, "Expect '{' before function body.")
     block()
 
-    funct := endCompiler()
-    emitBytes(OpCode.CONSTANT, makeConstant(OBJ_VAL(funct)))
+    function_ := endCompiler()
+    emitBytes(OpCode.CLOSURE, makeConstant(OBJ_VAL(function_)))
+
+    for i := 0; i < function_.upvalueCount; i += 1 {
+        isLocal_ : u8 = compiler.upvalues[i].isLocal ? 1 : 0
+        emitByte(isLocal_)
+        emitByte(u8(compiler.upvalues[i].index))
+    }
 }
 
 @(private="file")
@@ -566,6 +608,9 @@ namedVariable :: proc(name: Token, canAssign: bool) {
     if arg != -1 {
         getOp = OpCode.GET_LOCAL
         setOp = OpCode.SET_LOCAL
+    } else if arg = resolveUpvalue(current, &name); arg != -1 {
+        getOp = OpCode.GET_UPVALUE
+        setOp = OpCode.SET_UPVALUE
     } else {
         arg = int(identifierConstant(&name))
         getOp = OpCode.GET_GLOBAL
@@ -663,9 +708,23 @@ resolveLocal :: proc(compiler: ^Compiler, name: ^Token) -> int {
 }
 
 @(private="file")
+resolveUpvalue :: proc(compiler: ^Compiler, name: ^Token) -> int {
+    if compiler.enclosing == nil do return -1
+    local := resolveLocal(compiler.enclosing, name)
+    if local != -1 {
+        compiler.enclosing.locals[local].isCaptured = true
+        return addUpvalue(compiler, local, true)
+    }
+    upvalue := resolveUpvalue(compiler.enclosing, name)
+    if upvalue != -1 do return addUpvalue(compiler, upvalue, false)
+
+    return -1
+}
+
+@(private="file")
 returnStatement :: proc() {
     if current.type == FunctionType.SCRIPT do error("Can't return from top-level code.")
-    
+
     if match(TokenType.SEMICOLON) {
         emitReturn()
     } else {

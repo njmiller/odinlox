@@ -24,6 +24,25 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return simpleInstruction("OP_ADD", offset)
         case .CALL:
             return byteInstruction("OP_CALL", chunk, offset)
+        case .CLOSE_UPVALUE:
+            return simpleInstruction("OP_CLOSE_UPVALUE", offset)
+        case .CLOSURE:
+            offset := offset + 1
+            constant := chunk.code[offset]
+            offset += 1
+            fmt.printf("%-16s %4d ", "OP_CLOSURE", constant)
+            printValue(chunk.constants[constant])
+            fmt.printf("\n")
+
+            function_ := AS_FUNCTION(chunk.constants[constant])
+            for j := 0; j < function_.upvalueCount; j += 1 {
+                isLocal := chunk.code[offset]
+                offset += 1
+                index := chunk.code[offset]
+                offset += 1
+                fmt.printf("%04d      |                     %s %d\n", offset-2, isLocal > 0 ? "local" : "upvalue", index)
+            }
+            return offset
         case .CONSTANT:
             return constantInstruction("OP_CONSTANT", chunk, offset)
         case .DEFINE_GLOBAL:
@@ -38,6 +57,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return constantInstruction("OP_GET_GLOBAL", chunk, offset)
         case .GET_LOCAL:
             return byteInstruction("OP_GET_LOCAL", chunk, offset)
+        case .GET_UPVALUE:
+            return byteInstruction("OP_GET_UPVALUE", chunk, offset)
         case .GREATER:
             return simpleInstruction("OP_GREATER", offset)
         case .JUMP:
@@ -66,6 +87,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return constantInstruction("OP_SET_GLOBAL", chunk, offset)
         case .SET_LOCAL:
             return byteInstruction("OP_SET_LOCAL", chunk, offset)
+        case .SET_UPVALUE:
+            return byteInstruction("OP_SET_UPVALUE", chunk, offset)
         case .SUBTRACT:
             return simpleInstruction("OP_SUBTRACT", offset)
         case .TRUE:

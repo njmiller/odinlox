@@ -13,16 +13,23 @@ freeObjects :: proc() {
 
 freeObject :: proc(object: ^Obj) {
     switch object.type {
+        case .CLOSURE:
+            objClosure := cast(^ObjClosure) object
+            delete(objClosure.upvalues)
+            free(objClosure)
         case .FUNCTION:
-            objfunction := cast(^ObjFunction) object
-            freeChunk(&objfunction.chunk)
-            free(objfunction)
+            objFunction := cast(^ObjFunction) object
+            freeChunk(&objFunction.chunk)
+            free(objFunction)
         case .NATIVE:
-            objnative := cast(^ObjNative) object
-            free(objnative)
+            objNative := cast(^ObjNative) object
+            free(objNative)
         case .STRING:
-            objstr := cast(^ObjString) object
-            delete(objstr.str)
-            free(objstr)
+            objStr := cast(^ObjString) object
+            delete(objStr.str)
+            free(objStr)
+        case .UPVALUE:
+            objUp := cast(^ObjUpvalue) object
+            free(objUp)
     }
 }
