@@ -13,6 +13,7 @@ ObjType :: enum u8 {
 
 Obj :: struct {
     type: ObjType,
+    isMarked: bool,
     next: ^Obj,
 }
 
@@ -70,9 +71,20 @@ AS_STRING :: proc(value: Value) -> string { return AS_OBJSTRING(value).str }
 
 allocateObject :: proc($T: typeid, type: ObjType) -> ^T {
     obj := new(T)
+
+    vm.bytesAllocated += size_of(T)
+    if vm.bytesAllocated > vm.nextGC {
+        collectGarbage()
+    }
+    
     obj.type = type
+    obj.isMarked = false
     obj.next = vm.objects
     vm.objects = obj
+
+    when DEBUG_LOG_GC {
+        fmt.printf("%p allocate %v for %v\n", obj, size_of(T), type)
+    }
 
     return obj
 }
@@ -83,8 +95,10 @@ allocateString :: proc(chars: string, hash: u32) -> ^ObjString {
     obj.str = str
     obj.hash = hash
 
+    push(OBJ_VAL(obj))
     tableSet(&vm.strings, obj, NIL_VAL())
-
+    pop()
+    
     return obj
 }
 

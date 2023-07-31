@@ -27,7 +27,12 @@ VM :: struct {
     globals: Table,
     strings: Table,
     openUpvalues: ^ObjUpvalue,
+    bytesAllocated: int,
+    nextGC: int,
     objects: ^Obj,
+    grayCount: int,
+    //grayCapacity: int,
+    grayStack: [dynamic]^Obj,
 }
 
 InterpretResult :: enum {
@@ -47,6 +52,14 @@ resetStack  :: proc() {
 initVM :: proc() {
     resetStack()
     vm.objects = nil
+
+    vm.bytesAllocated = 0
+    vm.nextGC = 1024 * 1024
+
+    vm.grayCount = 0
+    //vm.grayCapacity = 0
+    //vm.grayCapacity = nil
+
     initTable(&vm.strings)
     initTable(&vm.globals)
 
@@ -146,12 +159,14 @@ closeUpvalues :: proc(last: ^Value) {
 }
 @(private="file")
 concatenate :: proc() {
-    b := AS_STRING(pop())
-    a := AS_STRING(pop())
+    b := AS_STRING(peek(0))
+    a := AS_STRING(peek(1))
     
     c := strings.concatenate( {a, b} )
 
     result := takeString(c)
+    pop()
+    pop()
     push(OBJ_VAL(result))
 
     //NJM: Check. I don't think I need to delete a or b since they are part of the

@@ -42,6 +42,14 @@ freeTable :: proc(table: ^Table) {
     initTable(table)
 }
 
+markTable :: proc(table: ^Table) {
+    for i := 0; i < table.capacity; i += 1 {
+        entry := &table.entries[i]
+        markObject(entry.key) // I think this is the few implicit type conversions
+        markValue(entry.value)
+    }
+}
+
 tableSet :: proc(table: ^Table, key: ^ObjString, value: Value) -> bool {
     if f32(table.count + 1) > f32(table.capacity) * TABLE_MAX_LOAD {
         capacity := table.capacity < 8 ? 8 : table.capacity*2
@@ -58,6 +66,15 @@ tableSet :: proc(table: ^Table, key: ^ObjString, value: Value) -> bool {
     entry.value = value
     
     return isNewKey
+}
+
+tableRemoveWhite :: proc(table: ^Table) {
+    for i := 0; i < table.capacity; i += 1 {
+        entry := &table.entries[i]
+        if entry.key != nil && !entry.key.obj.isMarked {
+            tableDelete(table, entry.key)
+        }
+    }
 }
 
 @(private="file")

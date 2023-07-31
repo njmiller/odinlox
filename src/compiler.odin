@@ -128,6 +128,14 @@ compile :: proc(source: string) -> ^ObjFunction {
     return parser.hadError ? nil : function
 }
 
+markCompilerRoots :: proc() {
+    compiler := current
+    for compiler != nil {
+        markObject(compiler.function)
+        compiler = compiler.enclosing
+    }
+}
+
 @(private="file")
 initCompiler :: proc(compiler: ^Compiler, type: FunctionType) {
     compiler.enclosing = current
