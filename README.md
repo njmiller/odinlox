@@ -1,6 +1,7 @@
 # OdinLox
-Lox bytecode compiler written in Odin to help me learn the language (https://craftinginterpreters.com/contents.html)
+Lox bytecode compiler written in Odin to have fun, help me learn the language, and learn about compilers (https://craftinginterpreters.com/contents.html)
 
 # TODO
+- Finish implementing code in book
 - Switch statemet
-- See if I can make hashtable more general
+- Use Odin hastable
