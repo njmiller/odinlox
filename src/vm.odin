@@ -105,6 +105,10 @@ callValue :: proc(callee: Value, argCount: int) -> bool {
                 return call(AS_CLOSURE(callee), argCount)
             //case .FUNCTION:
             //    return call(AS_FUNCTION(callee), argCount)
+            case .CLASS:
+                klass := AS_CLASS(callee)
+                vm.stack[vm.stackTop - argCount - 1] = OBJ_VAL(newInstance(klass))
+                return true
             case .NATIVE:
                 native := AS_NATIVE(callee)
                 result := native(argCount, vm.stack[vm.stackTop-argCount:vm.stackTop])
@@ -231,6 +235,8 @@ run :: proc() -> InterpretResult {
                 argCount := int(read_byte(frame))
                 if !callValue(peek(argCount), argCount) do return InterpretResult.RUNTIME_ERROR
                 frame = &vm.frames[vm.frameCount - 1]
+            case .CLASS:
+                push(OBJ_VAL(newClass(read_string(frame))))
             case .CLOSE_UPVALUE:
                 closeUpvalues(&vm.stack[vm.stackTop - 1])
                 pop()
@@ -248,7 +254,7 @@ run :: proc() -> InterpretResult {
                     }
                 }
             case .DEFINE_GLOBAL:
-                name := AS_OBJSTRING(read_constant(frame))
+                name := read_string(frame)
                 tableSet(&vm.globals, name, peek(0))
                 pop()
             case .DIVIDE:
@@ -274,6 +280,23 @@ run :: proc() -> InterpretResult {
             case .GET_LOCAL:
                 slot := read_byte(frame)
                 push(frame.slots[slot])
+            case .GET_PROPERTY:
+                if !IS_INSTANCE(peek(0)) {
+                    runtimeError("Only instances have properties.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                instance := AS_INSTANCE(peek(0))
+                name := read_string(frame)
+
+                value: Value
+                if tableGet(&instance.fields, name, &value) {
+                    pop()
+                    push(value)
+                    break
+                }
+                
+                runtimeError("Undefined property '%s'.", name.str)
+                return InterpretResult.RUNTIME_ERROR
             case .GET_UPVALUE:
                 slot := read_byte(frame)
                 push(frame.closure.upvalues[slot].location^)
@@ -351,6 +374,16 @@ run :: proc() -> InterpretResult {
             case .SET_LOCAL:
                 slot := read_byte(frame)
                 frame.slots[slot] = peek(0)
+            case .SET_PROPERTY:
+                if !IS_INSTANCE(peek(1)) {
+                    runtimeError("Only instances have fields.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                instance := AS_INSTANCE(peek(1))
+                tableSet(&instance.fields, read_string(frame), peek(0))
+                value := pop()
+                pop()
+                push(value)
             case .SET_UPVALUE:
                 slot := read_byte(frame)
                 frame.closure.upvalues[slot].location^ = peek(0)
@@ -397,6 +430,11 @@ read_constant :: proc(frame: ^CallFrame) -> Value {
     //frame := &vm.frames[vm.frameCount - 1]
     offset := read_byte(frame)
     return frame.closure.function.chunk.constants[offset]
+}
+
+@(private="file")
+read_string :: proc(frame: ^CallFrame) -> ^ObjString {
+    return AS_OBJSTRING(read_constant(frame))
 }
 
 @(private="file")

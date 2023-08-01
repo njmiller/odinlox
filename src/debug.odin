@@ -24,6 +24,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return simpleInstruction("OP_ADD", offset)
         case .CALL:
             return byteInstruction("OP_CALL", chunk, offset)
+        case .CLASS:
+            return constantInstruction("OP_CLASS", chunk, offset)
         case .CLOSE_UPVALUE:
             return simpleInstruction("OP_CLOSE_UPVALUE", offset)
         case .CLOSURE:
@@ -57,6 +59,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return constantInstruction("OP_GET_GLOBAL", chunk, offset)
         case .GET_LOCAL:
             return byteInstruction("OP_GET_LOCAL", chunk, offset)
+        case .GET_PROPERTY:
+            return constantInstruction("OP_GET_PROPERTY", chunk, offset)
         case .GET_UPVALUE:
             return byteInstruction("OP_GET_UPVALUE", chunk, offset)
         case .GREATER:
@@ -87,6 +91,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return constantInstruction("OP_SET_GLOBAL", chunk, offset)
         case .SET_LOCAL:
             return byteInstruction("OP_SET_LOCAL", chunk, offset)
+        case .SET_PROPERTY:
+            return constantInstruction("OP_SET_PROPERTY", chunk, offset)
         case .SET_UPVALUE:
             return byteInstruction("OP_SET_UPVALUE", chunk, offset)
         case .SUBTRACT:

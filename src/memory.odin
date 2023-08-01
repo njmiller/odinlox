@@ -44,6 +44,10 @@ freeObject :: proc(object: ^Obj) {
     }
 
     switch object.type {
+        case .CLASS:
+            klass := cast(^ObjClass) object
+            vm.bytesAllocated -= size_of(klass)
+            free(klass)
         case .CLOSURE:
             objClosure := cast(^ObjClosure) object
             vm.bytesAllocated -= size_of(objClosure.upvalues)
@@ -55,6 +59,11 @@ freeObject :: proc(object: ^Obj) {
             freeChunk(&objFunction.chunk)
             vm.bytesAllocated -= size_of(objFunction)
             free(objFunction)
+        case .INSTANCE:
+            instance := cast(^ObjInstance) object
+            freeTable(&instance.fields)
+            vm.bytesAllocated -= size_of(instance)
+            free(instance)
         case .NATIVE:
             objNative := cast(^ObjNative) object
             vm.bytesAllocated -= size_of(objNative)
@@ -135,6 +144,9 @@ blackenObject :: proc(object: ^Obj) {
     }
 
     switch object.type {
+        case .CLASS:
+            klass := cast(^ObjClass) object
+            markObject(klass.name)
         case .CLOSURE:
             closure := cast(^ObjClosure) object
             markObject(closure.function)
@@ -145,6 +157,10 @@ blackenObject :: proc(object: ^Obj) {
             function := cast(^ObjFunction) object
             markObject(function.name)
             markArray(function.chunk.constants)
+        case .INSTANCE:
+            instance := cast(^ObjInstance) object
+            markObject(instance.klass)
+            markTable(&instance.fields)
         case .UPVALUE:
             markValue( (cast(^ObjUpvalue) object).closed )
         case .NATIVE, .STRING:

@@ -75,7 +75,7 @@ rules : []ParseRule = {
     TokenType.LEFT_BRACE    = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.RIGHT_BRACE   = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.COMMA         = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.DOT           = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.DOT           = ParseRule{nil,      dot,    Precedence.CALL},
     TokenType.MINUS         = ParseRule{unary,    binary, Precedence.TERM},
     TokenType.PLUS          = ParseRule{nil,      binary, Precedence.TERM},
     TokenType.SEMICOLON     = ParseRule{nil,      nil,    Precedence.NONE},
@@ -256,6 +256,19 @@ check :: proc(type: TokenType) -> bool {
 }
 
 @(private="file")
+classDeclaration :: proc() {
+    consume(TokenType.IDENTIFIER, "Expect class name.")
+    nameConstant := identifierConstant(&parser.previous)
+    declareVariable()
+
+    emitBytes(OpCode.CLASS, nameConstant)
+    defineVariable(nameConstant)
+
+    consume(TokenType.LEFT_BRACE, "Expect '{' before class body.")
+    consume(TokenType.RIGHT_BRACE, "Expect '}' after class body.")
+}
+
+@(private="file")
 consume :: proc(type: TokenType, message: string) {
     if parser.current.type == type {
         advance()
@@ -272,7 +285,9 @@ currentChunk :: proc() -> ^Chunk {
 
 @(private="file")
 declaration :: proc() {
-    if match(TokenType.FUN) {
+    if match(TokenType.CLASS) {
+        classDeclaration()
+    } else if match(TokenType.FUN) {
         funDeclaration()
     } else if match(TokenType.VAR) {
         varDeclaration()
@@ -308,6 +323,19 @@ defineVariable :: proc(global: u8) {
     }
 
     emitBytes(OpCode.DEFINE_GLOBAL, global)
+}
+
+@(private="file")
+dot :: proc(canAssign: bool) {
+    consume(TokenType.IDENTIFIER, "Expect property name after '.'.")
+    name := identifierConstant(&parser.previous)
+
+    if canAssign && match(TokenType.EQUAL) {
+        expression()
+        emitBytes(OpCode.SET_PROPERTY, name)
+    } else {
+        emitBytes(OpCode.GET_PROPERTY, name)
+    }
 }
 
 @(private="file")
