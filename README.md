@@ -5,3 +5,4 @@ Lox bytecode compiler written in Odin to have fun, help me learn the language, a
 - Finish implementing code in book
 - Switch statemet
 - Use Odin hastable
+- Take another look at implementation of garbage collector and move all calls to "free" and "delete" to memory.odin
