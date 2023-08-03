@@ -16,12 +16,16 @@ OpCode :: enum u8 {
     GET_GLOBAL,
     GET_LOCAL,
     GET_PROPERTY,
+    GET_SUPER,
     GET_UPVALUE,
     GREATER,
+    INHERIT,
+    INVOKE,
     JUMP,
     JUMP_IF_FALSE,
     LESS,
     LOOP,
+    METHOD,
     MULTIPLY,
     NEGATE,
     NIL,
@@ -33,8 +37,9 @@ OpCode :: enum u8 {
     SET_LOCAL,
     SET_PROPERTY,
     SET_UPVALUE,
-    TRUE,
     SUBTRACT,
+    SUPER_INVOKE,
+    TRUE,
 }
 
 Chunk :: struct {

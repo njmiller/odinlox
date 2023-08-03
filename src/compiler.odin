@@ -50,6 +50,8 @@ Upvalue :: struct {
 
 FunctionType :: enum u8 {
     FUNCTION,
+    INITIALIZER,
+    METHOD,
     SCRIPT,
 }
 
@@ -63,10 +65,16 @@ Compiler :: struct {
     scopeDepth : int,
 }
 
+ClassCompiler :: struct {
+    enclosing : ^ClassCompiler,
+    hasSuperclass : bool,
+}
+
 ParseFn :: #type proc(canAssign: bool)
 
 parser : Parser
 current : ^Compiler = nil
+currentClass : ^ClassCompiler = nil
 compilingChunk : ^Chunk
 
 rules : []ParseRule = {
@@ -103,8 +111,8 @@ rules : []ParseRule = {
     TokenType.OR            = ParseRule{nil,      or_,    Precedence.OR},
     TokenType.PRINT         = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.RETURN        = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.SUPER         = ParseRule{nil,      nil,    Precedence.NONE},
-    TokenType.THIS          = ParseRule{nil,      nil,    Precedence.NONE},
+    TokenType.SUPER         = ParseRule{super_,   nil,    Precedence.NONE},
+    TokenType.THIS          = ParseRule{this_,    nil,    Precedence.NONE},
     TokenType.TRUE          = ParseRule{literal,  nil,    Precedence.NONE},
     TokenType.VAR           = ParseRule{nil,      nil,    Precedence.NONE},
     TokenType.WHILE         = ParseRule{nil,      nil,    Precedence.NONE},
@@ -153,7 +161,11 @@ initCompiler :: proc(compiler: ^Compiler, type: FunctionType) {
     current.localCount += 1
     local.depth = 0
     local.isCaptured = false
-    local.name.value = ""
+    if type != FunctionType.FUNCTION {
+        local.name.value = "this"
+    } else {
+        local.name.value = ""
+    }
 }
 
 @(private="file")
@@ -258,14 +270,48 @@ check :: proc(type: TokenType) -> bool {
 @(private="file")
 classDeclaration :: proc() {
     consume(TokenType.IDENTIFIER, "Expect class name.")
+    className := parser.previous
     nameConstant := identifierConstant(&parser.previous)
     declareVariable()
 
     emitBytes(OpCode.CLASS, nameConstant)
     defineVariable(nameConstant)
 
+    classCompiler : ClassCompiler
+    classCompiler.hasSuperclass = false
+    classCompiler.enclosing = currentClass
+    currentClass = &classCompiler
+
+    if match(TokenType.LESS) {
+        consume(TokenType.IDENTIFIER, "Expect superclass name.")
+        variable(false)
+
+        if identifiersEqual(&className, &parser.previous) {
+            error("A class can't inhereit from itself.")
+        }
+        
+        beginScope()
+        addLocal(syntheticToken("super"))
+        defineVariable(0)
+
+        namedVariable(className, false)
+        emitByte(OpCode.INHERIT)
+        classCompiler.hasSuperclass = true
+    }
+
+    namedVariable(className, false)
+
     consume(TokenType.LEFT_BRACE, "Expect '{' before class body.")
+
+    for !check(TokenType.RIGHT_BRACE) && !check(TokenType.EOF) {
+        method()
+    }
     consume(TokenType.RIGHT_BRACE, "Expect '}' after class body.")
+    emitByte(OpCode.POP)
+
+    if classCompiler.hasSuperclass do endScope()
+
+    currentClass = currentClass.enclosing
 }
 
 @(private="file")
@@ -333,6 +379,10 @@ dot :: proc(canAssign: bool) {
     if canAssign && match(TokenType.EQUAL) {
         expression()
         emitBytes(OpCode.SET_PROPERTY, name)
+    } else if match(TokenType.LEFT_PAREN) {
+        argCount := argumentList()
+        emitBytes(OpCode.INVOKE, name)
+        emitByte(argCount)
     } else {
         emitBytes(OpCode.GET_PROPERTY, name)
     }
@@ -400,7 +450,11 @@ emitLoop :: proc(loopStart: int) {
 
 @(private="file")
 emitReturn :: proc() {
-    emitByte(OpCode.NIL)
+    if current.type == .INITIALIZER {
+        emitBytes(OpCode.GET_LOCAL, 0)
+    } else {
+        emitByte(OpCode.NIL)
+    }
     emitByte(OpCode.RETURN)
 }
 
@@ -636,6 +690,18 @@ match :: proc(type: TokenType) -> bool {
 }
 
 @(private="file")
+method :: proc() {
+    consume(TokenType.IDENTIFIER, "Expect method name.")
+    constant := identifierConstant(&parser.previous)
+
+    type := FunctionType.METHOD
+    if parser.previous.value == "init" do type = FunctionType.INITIALIZER
+    function(type)
+
+    emitBytes(OpCode.METHOD, constant)
+}
+
+@(private="file")
 namedVariable :: proc(name: Token, canAssign: bool) {
     name := name //NJM, TODO: See if this works so we can take pointer to name
     getOp, setOp : OpCode
@@ -764,6 +830,7 @@ returnStatement :: proc() {
     if match(TokenType.SEMICOLON) {
         emitReturn()
     } else {
+        if current.type == .INITIALIZER do error("Can't return a value from an initializer.")
         expression()
         consume(TokenType.SEMICOLON, "Expect ';' after return value.")
         emitByte(OpCode.RETURN)
@@ -798,6 +865,30 @@ stringf :: proc(canAssign: bool) {
 }
 
 @(private="file")
+super_ :: proc(canAssign: bool) {
+    if currentClass == nil {
+        error("Can't use 'super' outside of a class.")
+    } else if !currentClass.hasSuperclass {
+        error("Can't use 'super' in a class with no superclass.")
+    }
+
+    consume(TokenType.DOT, "Exper '.' after 'super'.")
+    consume(TokenType.IDENTIFIER, "Expect superclass method name.")
+    name := identifierConstant(&parser.previous)
+
+    namedVariable(syntheticToken("this"), false)
+    if match(TokenType.LEFT_PAREN) {
+        argCount := argumentList()
+        namedVariable(syntheticToken("super"), false)
+        emitBytes(OpCode.SUPER_INVOKE, name)
+        emitByte(argCount)
+    } else {
+        namedVariable(syntheticToken("super"), false)
+        emitBytes(OpCode.GET_SUPER, name)
+    }
+}
+
+@(private="file")
 synchronize :: proc() {
     parser.panicMode = false
 
@@ -810,6 +901,22 @@ synchronize :: proc() {
 
         advance()
     }
+}
+
+@(private="file")
+syntheticToken :: proc(text: string) -> Token {
+    token : Token
+    token.value = text
+    return token
+}
+
+@(private="file")
+this_ :: proc(canAssign: bool) {
+    if currentClass == nil {
+        error("Can't use 'this' outside of a class.")
+    }
+
+    variable(false)
 }
 
 @(private="file")

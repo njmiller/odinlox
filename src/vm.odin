@@ -26,6 +26,7 @@ VM :: struct {
     stackTop: int,
     globals: Table,
     strings: Table,
+    initString: ^ObjString,
     openUpvalues: ^ObjUpvalue,
     bytesAllocated: int,
     nextGC: int,
@@ -63,18 +64,36 @@ initVM :: proc() {
     initTable(&vm.strings)
     initTable(&vm.globals)
 
+    vm.initString = nil
+    vm.initString = copyString("init")
+
     defineNative("clock", clockNative)
 }
 
 freeVM :: proc() {
-    freeObjects()
     freeTable(&vm.strings)
     freeTable(&vm.globals)
+    vm.initString = nil
+    freeObjects()
 }
 
 @(private="file")
 isFalsey :: proc(value: Value) -> bool {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value))
+}
+
+@(private="file")
+bindMethod :: proc(klass: ^ObjClass, name: ^ObjString) -> bool {
+    method: Value
+    if !tableGet(&klass.methods, name, &method) {
+        runtimeError("Undefined property '%s'.", name.str)
+        return false
+    }
+
+    bound := newBoundMethod(peek(0), AS_CLOSURE(method))
+    pop()
+    push(OBJ_VAL(bound))
+    return true
 }
 
 @(private="file")
@@ -101,6 +120,10 @@ call :: proc(closure: ^ObjClosure, argCount: int) -> bool {
 callValue :: proc(callee: Value, argCount: int) -> bool {
     if IS_OBJ(callee) {
         #partial switch (OBJ_TYPE(callee)) {
+            case .BOUND_METHOD:
+                bound := AS_BOUND_METHOD(callee)
+                vm.stack[vm.stackTop - argCount - 1] = bound.receiver
+                return call(bound.method, argCount)
             case .CLOSURE:
                 return call(AS_CLOSURE(callee), argCount)
             //case .FUNCTION:
@@ -108,6 +131,10 @@ callValue :: proc(callee: Value, argCount: int) -> bool {
             case .CLASS:
                 klass := AS_CLASS(callee)
                 vm.stack[vm.stackTop - argCount - 1] = OBJ_VAL(newInstance(klass))
+                initializer : Value
+                if tableGet(&klass.methods, vm.initString, &initializer) {
+                    return call(AS_CLOSURE(initializer), argCount)
+                }
                 return true
             case .NATIVE:
                 native := AS_NATIVE(callee)
@@ -176,6 +203,14 @@ concatenate :: proc() {
     //NJM: Check. I don't think I need to delete a or b since they are part of the
     //objects which will be garbage collected. C is cloned for result so we can delete it
     delete(c)
+}
+
+@(private="file")
+defineMethod :: proc(name: ^ObjString) {
+    method := peek(0)
+    klass := AS_CLASS(peek(1))
+    tableSet(&klass.methods, name, method)
+    pop()
 }
 
 @(private="file")
@@ -294,9 +329,15 @@ run :: proc() -> InterpretResult {
                     push(value)
                     break
                 }
-                
-                runtimeError("Undefined property '%s'.", name.str)
-                return InterpretResult.RUNTIME_ERROR
+
+                if !bindMethod(instance.klass, name) {
+                    return InterpretResult.RUNTIME_ERROR
+                }
+            case .GET_SUPER:
+                name := read_string(frame)
+                superclass := AS_CLASS(pop())
+
+                if !bindMethod(superclass, name) do return InterpretResult.RUNTIME_ERROR
             case .GET_UPVALUE:
                 slot := read_byte(frame)
                 push(frame.closure.upvalues[slot].location^)
@@ -310,6 +351,22 @@ run :: proc() -> InterpretResult {
                 push(BOOL_VAL(a > b))
             case .FALSE:
                 push(BOOL_VAL(false))
+            case .INHERIT:
+                superclass := peek(1)
+                if !IS_CLASS(superclass) {
+                    runtimeError("Superclass must be a class.")
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                subclass := AS_CLASS(peek(0))
+                tableAddAll(&AS_CLASS(superclass).methods, &subclass.methods)
+                pop()
+            case .INVOKE:
+                method := read_string(frame)
+                argCount := int(read_byte(frame))
+                if !invoke(method, argCount) {
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                frame = &vm.frames[vm.frameCount - 1]
             case .JUMP:
                 offset := read_short(frame)
                 frame.ip += int(offset)
@@ -327,6 +384,8 @@ run :: proc() -> InterpretResult {
             case .LOOP:
                 offset := read_short(frame)
                 frame.ip -= int(offset)
+            case .METHOD:
+                defineMethod(read_string(frame))
             case .MULTIPLY:
                 if !IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) {
                     runtimeError("Operands must be numbers.")
@@ -395,6 +454,14 @@ run :: proc() -> InterpretResult {
                 b := AS_NUMBER(pop())
                 a := AS_NUMBER(pop())
                 push(NUMBER_VAL(a - b))
+            case .SUPER_INVOKE:
+                method := read_string(frame)
+                argCount := int(read_byte(frame))
+                superclass := AS_CLASS(pop())
+                if !invokeFromClass(superclass, method, argCount) {
+                    return InterpretResult.RUNTIME_ERROR
+                }
+                frame = &vm.frames[vm.frameCount - 1]
             case.TRUE:
                 push(BOOL_VAL(true))
             case .CONSTANT:
@@ -415,6 +482,34 @@ interpret :: proc(source: string) -> InterpretResult {
     call(closure, 0)
 
     return run()
+}
+
+@(private="file")
+invoke :: proc(name: ^ObjString, argCount: int) -> bool {
+    receiver := peek(argCount)
+
+    if !IS_INSTANCE(receiver) {
+        runtimeError("Only instances have methods.")
+        return false
+    }
+    instance := AS_INSTANCE(receiver)
+
+    value : Value
+    if tableGet(&instance.fields, name, &value) {
+        vm.stack[vm.stackTop - argCount - 1] = value
+        return callValue(value, argCount)
+    }
+    return invokeFromClass(instance.klass, name, argCount)
+}
+
+@(private="file")
+invokeFromClass :: proc(klass: ^ObjClass, name: ^ObjString, argCount: int) -> bool {
+    method: Value
+    if !tableGet(&klass.methods, name, &method) {
+        runtimeError("Undefined property '%s'.", name.str)
+        return false
+    }
+    return call(AS_CLOSURE(method), argCount)
 }
 
 @(private="file")

@@ -4,6 +4,7 @@ import "core:strings"
 import "core:fmt"
 
 ObjType :: enum u8 {
+    BOUND_METHOD,
     CLASS,
     CLOSURE,
     FUNCTION,
@@ -19,9 +20,16 @@ Obj :: struct {
     next: ^Obj,
 }
 
+ObjBoundMethod :: struct {
+    using obj: Obj,
+    receiver: Value,
+    method: ^ObjClosure,
+}
+
 ObjClass :: struct {
     using obj: Obj,
     name: ^ObjString,
+    methods: Table,
 }
 
 ObjClosure :: struct {
@@ -74,6 +82,7 @@ IS_NATIVE :: proc(value: Value) -> bool { return isObjType(value, ObjType.NATIVE
 IS_CLOSURE :: proc(value: Value) -> bool { return isObjType(value, ObjType.CLOSURE)}
 IS_CLASS :: proc(value: Value) -> bool { return isObjType(value, ObjType.CLASS)}
 IS_INSTANCE :: proc(value: Value) -> bool { return isObjType(value, ObjType.INSTANCE)}
+IS_BOUND_METHOD :: proc(value: Value) -> bool { return isObjType(value, ObjType.BOUND_METHOD)}
 
 //Returning pointers to the different Object types from the Value structure
 AS_OBJSTRING :: proc(value: Value) -> ^ObjString { return cast(^ObjString) AS_OBJ(value) }
@@ -82,6 +91,7 @@ AS_NATIVE :: proc(value: Value) -> NativeFn { return (cast(^ObjNative) AS_OBJ(va
 AS_CLOSURE :: proc(value: Value) -> ^ObjClosure { return cast(^ObjClosure) AS_OBJ(value) }
 AS_CLASS :: proc(value: Value) -> ^ObjClass { return cast(^ObjClass) AS_OBJ(value)}
 AS_INSTANCE :: proc(value: Value) -> ^ObjInstance { return cast(^ObjInstance) AS_OBJ(value)}
+AS_BOUND_METHOD :: proc(value: Value) -> ^ObjBoundMethod { return cast(^ObjBoundMethod) AS_OBJ(value)}
 
 //Unboxing object data
 AS_STRING :: proc(value: Value) -> string { return AS_OBJSTRING(value).str }
@@ -143,9 +153,18 @@ isObjType :: proc(value: Value, type: ObjType) -> bool {
     return IS_OBJ(value) && (AS_OBJ(value).type == type)
 }
 
+newBoundMethod :: proc(receiver: Value, method: ^ObjClosure) -> ^ObjBoundMethod {
+    bound := allocateObject(ObjBoundMethod, ObjType.BOUND_METHOD)
+    bound.receiver = receiver
+    bound.method = method
+
+    return bound
+}
+
 newClass :: proc(name: ^ObjString) -> ^ObjClass {
     klass := allocateObject(ObjClass, ObjType.CLASS)
     klass.name = name
+    initTable(&klass.methods)
     return klass
 }
 
@@ -200,6 +219,8 @@ printFunction :: proc(function: ^ObjFunction) {
 printObject :: proc(value: Value) {
     obj := AS_OBJ(value)
     switch obj.type {
+        case .BOUND_METHOD:
+            printFunction(AS_BOUND_METHOD(value).method.function)
         case .CLASS:
             fmt.printf("%s", AS_CLASS(value).name.str)
         case .CLOSURE:

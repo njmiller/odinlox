@@ -61,10 +61,16 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return byteInstruction("OP_GET_LOCAL", chunk, offset)
         case .GET_PROPERTY:
             return constantInstruction("OP_GET_PROPERTY", chunk, offset)
+        case .GET_SUPER:
+            return constantInstruction("OP_GET_SUPER", chunk, offset)
         case .GET_UPVALUE:
             return byteInstruction("OP_GET_UPVALUE", chunk, offset)
         case .GREATER:
             return simpleInstruction("OP_GREATER", offset)
+        case .INHERIT:
+            return simpleInstruction("OP_INHERIT", offset)
+        case .INVOKE:
+            return invokeInstruction("OP_INVOKE", chunk, offset)
         case .JUMP:
             return jumpInstruction("OP_JUMP", 1, chunk, offset)
         case .JUMP_IF_FALSE:
@@ -73,6 +79,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return simpleInstruction("OP_LESS", offset)
         case .LOOP:
             return jumpInstruction("OP_LOOP", -1, chunk, offset)
+        case .METHOD:
+            return constantInstruction("OP_METHOD", chunk, offset)
         case .MULTIPLY:
             return simpleInstruction("OP_MULTIPLY", offset)
         case .NEGATE:
@@ -97,6 +105,8 @@ disassembleInstruction :: proc(chunk: ^Chunk, offset: int) -> int {
             return byteInstruction("OP_SET_UPVALUE", chunk, offset)
         case .SUBTRACT:
             return simpleInstruction("OP_SUBTRACT", offset)
+        case .SUPER_INVOKE:
+            return invokeInstruction("OP_SUPER_INVOKE", chunk, offset)
         case .TRUE:
             return simpleInstruction("OP_TRUE", offset)
         case:
@@ -119,6 +129,16 @@ constantInstruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
     printValue(chunk.constants[constant])
     fmt.printf("'\n")
     return offset + 2
+}
+
+@(private="file")
+invokeInstruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
+    constant := chunk.code[offset+1]
+    argCount := chunk.code[offset+2]
+    fmt.printf("%-16s (%d args) %4d'", name, argCount, constant)
+    printValue(chunk.constants[constant])
+    fmt.printf("\n")
+    return offset + 3
 }
 
 @(private="file")

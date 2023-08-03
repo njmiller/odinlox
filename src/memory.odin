@@ -44,8 +44,13 @@ freeObject :: proc(object: ^Obj) {
     }
 
     switch object.type {
+        case .BOUND_METHOD:
+            bound := cast(^ObjBoundMethod) object
+            vm.bytesAllocated -= size_of(bound)
+            free(bound)
         case .CLASS:
             klass := cast(^ObjClass) object
+            freeTable(&klass.methods)
             vm.bytesAllocated -= size_of(klass)
             free(klass)
         case .CLOSURE:
@@ -129,6 +134,7 @@ markRoots :: proc() {
 
     markTable(&vm.globals)
     markCompilerRoots()
+    markObject(vm.initString)
 }
 
 markValue :: proc(value: Value) {
@@ -144,9 +150,14 @@ blackenObject :: proc(object: ^Obj) {
     }
 
     switch object.type {
+        case .BOUND_METHOD:
+            bound := cast(^ObjBoundMethod) object
+            markValue(bound.receiver)
+            markObject(bound.method)
         case .CLASS:
             klass := cast(^ObjClass) object
             markObject(klass.name)
+            markTable(&klass.methods)
         case .CLOSURE:
             closure := cast(^ObjClosure) object
             markObject(closure.function)
