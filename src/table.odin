@@ -103,7 +103,8 @@ adjustCapacity :: proc(table: ^Table, capacity: int) {
 }
 
 findEntry :: proc(entries: []Entry, capacity: int, key: ^ObjString) -> ^Entry {
-    index := key.hash % u32(capacity)
+    //index := key.hash % u32(capacity)
+    index := key.hash & u32(capacity-1)
     tombstone : ^Entry = nil
 
     for {
@@ -118,7 +119,8 @@ findEntry :: proc(entries: []Entry, capacity: int, key: ^ObjString) -> ^Entry {
             }
         } else if entry.key == key do return entry
 
-        index = (index + 1) % u32(capacity)
+        //index = (index + 1) % u32(capacity)
+        index = (index + 1) & u32(capacity-1)
     }
 }
 
@@ -157,7 +159,8 @@ tableDelete :: proc(table: ^Table, key: ^ObjString) -> bool {
 tableFindString :: proc(table: ^Table, str: string, hash: u32) -> ^ObjString {
     if table.count == 0 do return nil
 
-    index := hash % u32(table.capacity)
+    //index := hash % u32(table.capacity)
+    index := hash & u32(table.capacity - 1)
 
     for {
         entry := &table.entries[index]
@@ -170,7 +173,8 @@ tableFindString :: proc(table: ^Table, str: string, hash: u32) -> ^ObjString {
             return entry.key
         }
 
-        index = (index + 1) % u32(table.capacity)
+        //index = (index + 1) % u32(table.capacity)
+        index = (index + 1) & u32(table.capacity-1)
     }
 }
 //GROW_CAPACITY :: proc(capacity)
